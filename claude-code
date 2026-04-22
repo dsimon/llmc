@@ -1,0 +1,308 @@
+#!/usr/bin/env bash
+#
+# claude-code — Launch Claude Code with a local or cloud LLM.
+# Queries LM Studio (localhost:1234) for available local models,
+# shows a menu, runs claude-code with the selected model, and
+# restores the original environment on exit.
+#
+set -euo pipefail
+
+# ── Configuration ──────────────────────────────────────────────────
+LM_STUDIO_URL="http://localhost:1234"
+LM_STUDIO_MODELS_API="${LM_STUDIO_URL}/api/v1/models"
+
+CLOUD_MODELS=(
+  "claude-opus-4-7"
+  "claude-sonnet-4-6"
+  "claude-haiku-4-5-20251001"
+  "claude-haiku-4-10-20250414"
+  "claude-sonnet-4-20250514"
+  "claude-opus-4-20250514"
+)
+CLOUD_DISPLAY=(
+  "Claude Opus 4.6 (latest)"
+  "Claude Sonnet 4.6 (latest)"
+  "Claude Haiku 4.5 (latest)"
+  "Claude Haiku 4 (older)"
+  "Claude Sonnet 4 (older)"
+  "Claude Opus 4 (older)"
+)
+
+# ── Helpers ────────────────────────────────────────────────────────
+save_env() {
+  # Save current environment state for restoration
+  local backup_file
+  backup_file="$(mktemp)"
+  for var in ANTHROPIC_MODEL ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN; do
+    if [[ -n "${!var:-}" ]]; then
+      echo "${var}=${!var}" >> "$backup_file"
+    else
+      echo "# No ${var} was set" >> "$backup_file"
+    fi
+  done
+  echo "$backup_file"
+}
+
+restore_env() {
+  local backup_file="$1"
+  if [[ -f "$backup_file" ]]; then
+    # Unset the vars we may have set
+    unset ANTHROPIC_MODEL 2>/dev/null || true
+    unset ANTHROPIC_BASE_URL 2>/dev/null || true
+    unset ANTHROPIC_AUTH_TOKEN 2>/dev/null || true
+    # Restore saved values
+    while IFS='=' read -r key value; do
+      [[ "$key" =~ ^# ]] && continue
+      [[ -z "$key" ]] && continue
+      export "$key"="$value"
+    done < "$backup_file"
+    rm -f "$backup_file"
+    ENV_BACKUP_FILE=""
+  fi
+}
+
+cleanup() {
+  if [[ -n "${ENV_BACKUP_FILE:-}" ]]; then
+    restore_env "$ENV_BACKUP_FILE"
+    echo ""
+    echo "[$(date '+%H:%M:%S')] Restored original environment."
+  fi
+}
+
+# ── Fetch local models from LM Studio ──────────────────────────────
+fetch_local_models() {
+  local json
+  json="$(curl -s "$LM_STUDIO_MODELS_API" 2>/dev/null)" || {
+    echo ""
+    return 1
+  }
+  echo "$json"
+}
+
+# Format a human-readable size string
+format_size() {
+  local bytes="$1"
+  if (( bytes >= 1073741824 )); then
+    printf "%.1f GB" "$(echo "scale=1; $bytes / 1073741824" | bc)"
+  elif (( bytes >= 1048576 )); then
+    printf "%.1f MB" "$(echo "scale=1; $bytes / 1048576" | bc)"
+  else
+    printf "%d KB" "$(echo "scale=0; $bytes / 1024" | bc)"
+  fi
+}
+
+# ── Main ───────────────────────────────────────────────────────────
+main() {
+  echo "=============================================="
+  echo "  Claude Code — LLM Launcher"
+  echo "=============================================="
+  echo ""
+
+  # Save environment before any changes
+  ENV_BACKUP_FILE="$(save_env)"
+  trap cleanup EXIT
+
+  # ── Fetch local models ─────────────────────────────────────────
+  local local_json
+  if ! local_json="$(fetch_local_models)"; then
+    echo "Warning: Cannot connect to LM Studio at ${LM_STUDIO_URL}"
+    echo "  Make sure LM Studio is running with its local server enabled."
+    echo ""
+  fi
+
+  # Parse local LLMs into arrays
+  local -a local_keys=() local_names=() local_archs=()
+  local -a local_quants=() local_sizes=() local_contexts=()
+  local -a local_vision=() local_tooluse=() local_reasoning=()
+  local -a local_loaded=() local_variants=()
+
+  if [[ -n "$local_json" ]]; then
+    # Use python3 to parse JSON (more reliable than jq for complex parsing)
+    eval "$(python3 -c "
+import json, sys
+
+models = json.loads(sys.argv[1]).get('models', [])
+llms = [m for m in models if m.get('type') == 'llm']
+
+# Print bash arrays
+print('local_keys=(')
+for m in llms:
+    print(f'    \"{m[\"key\"]}\"')
+print(')')
+
+print('local_names=(')
+for m in llms:
+    print(f'    \"{m.get(\"display_name\", m[\"key\"])}\"')
+print(')')
+
+print('local_archs=(')
+for m in llms:
+    print(f'    \"{m.get(\"architecture\", \"?\")}\"')
+print(')')
+
+print('local_quants=(')
+for m in llms:
+    q = m.get('quantization', {})
+    print(f'    \"{q.get(\"name\", \"?\")} ({q.get(\"bits_per_weight\", \"?\")}bit)\"')
+print(')')
+
+print('local_sizes=(')
+for m in llms:
+    print(f'    \"{m.get(\"size_bytes\", 0)}\"')
+print(')')
+
+print('local_contexts=(')
+for m in llms:
+    print(f'    \"{m.get(\"max_context_length\", 0)}\"')
+print(')')
+
+print('local_vision=(')
+for m in llms:
+    cap = m.get('capabilities', {})
+    print(f'    \"{cap.get(\"vision\", False)}\"')
+print(')')
+
+print('local_tooluse=(')
+for m in llms:
+    cap = m.get('capabilities', {})
+    print(f'    \"{cap.get(\"trained_for_tool_use\", False)}\"')
+print(')')
+
+print('local_reasoning=(')
+for m in llms:
+    r = m.get('capabilities', {}).get('reasoning', {})
+    print(f'    \"{r.get(\"default\", \"off\")}\"')
+print(')')
+
+print('local_loaded=(')
+for m in llms:
+    inst = m.get('loaded_instances', [])
+    print(f'    \"{len(inst)}\"')
+print(')')
+
+print('local_variants=(')
+for m in llms:
+    variants = m.get('variants', [])
+    # Use selected_variant if available, otherwise first variant
+    sel = m.get('selected_variant', '')
+    if sel:
+        print(f'    \"{sel}\"')
+    elif variants:
+        print(f'    \"{variants[0]}\"')
+    else:
+        print('    \"\"')
+print(')')
+" "$local_json")"
+  fi
+
+  local num_local=${#local_keys[@]}
+
+  # ── Display menu ───────────────────────────────────────────────
+  local opt=0
+  local total=$(( num_local + ${#CLOUD_MODELS[@]} + 1 ))  # +1 for quit
+
+  if (( num_local > 0 )); then
+    echo "Local LLMs (from LM Studio):"
+    echo "----------------------------------------------"
+    printf "  %-3s  %-28s  %-8s  %-10s  %-8s  %-8s  %s\n" "#" "Name" "Arch" "Quant" "Size" "Context" "Loaded"
+    printf "  %-3s  %-28s  %-8s  %-10s  %-8s  %-8s  %s\n" "---" "----------------------------" "--------" "----------" "--------" "--------" "------"
+    for (( i = 0; i < num_local; i++ )); do
+      local loaded_marker=""
+      if (( ${local_loaded[$i]} > 0 )); then
+        loaded_marker=" [LOADED]"
+      fi
+      printf "  %-3s  %-28s  %-8s  %-10s  %-8s  %-8s  %s\n" \
+        "$((i + 1))" \
+        "${local_names[$i]:-${local_keys[$i]}}" \
+        "${local_archs[$i]}" \
+        "${local_quants[$i]}" \
+        "$(format_size ${local_sizes[$i]})" \
+        "${local_contexts[$i]}" \
+        "${loaded_marker}"
+    done
+    echo ""
+  else
+    echo "No local LLMs found from LM Studio."
+    echo ""
+  fi
+
+  echo "Cloud LLMs (Anthropic API):"
+  echo "----------------------------------------------"
+  for (( i = 0; i < ${#CLOUD_MODELS[@]}; i++ )); do
+    local idx=$(( num_local + i + 1 ))
+    printf "  %-3s  %-35s  (%s)\n" "$idx" "${CLOUD_DISPLAY[$i]}" "${CLOUD_MODELS[$i]}"
+  done
+  echo ""
+  printf "  %-3s  %s\n" "$total" "Quit / Exit"
+  echo ""
+  echo "----------------------------------------------"
+
+  # ── Prompt for selection ───────────────────────────────────────
+  read -p "Choose a model (1-$total): " opt
+
+  if ! [[ "$opt" =~ ^[0-9]+$ ]] || (( opt < 1 )) || (( opt > total )); then
+    echo "Invalid selection."
+    return 1
+  fi
+
+  # ── Handle selection ───────────────────────────────────────────
+  if (( opt == total )); then
+    echo "Goodbye."
+    return 0
+  fi
+
+  local model_flag=""
+  local model_display=""
+
+  if (( opt <= num_local )); then
+    # Local model from LM Studio
+    local idx=$(( opt - 1 ))
+    local key="${local_keys[$idx]}"
+    local variant="${local_variants[$idx]:-$key}"
+    model_flag="openai/${variant}"
+    model_display="${local_names[$idx]:-$key} (local via LM Studio)"
+
+    if command -v lms >/dev/null 2>&1; then
+      # Unload any currently loaded models
+      for (( j = 0; j < num_local; j++ )); do
+        if (( ${local_loaded[$j]} > 0 )); then
+          echo "Unloading ${local_names[$j]:-${local_keys[$j]}}..."
+          lms unload "${local_keys[$j]}" 2>/dev/null || true
+        fi
+      done
+      echo "Loading ${local_names[$idx]:-$key}..."
+      lms load "$key"
+    else
+      echo "Warning: 'lms' command not found; skipping model load/unload."
+    fi
+
+    export ANTHROPIC_BASE_URL="${LM_STUDIO_URL}"
+    export ANTHROPIC_AUTH_TOKEN="lmstudio"
+    echo "Using local model: ${model_display}"
+    echo "  Base URL:  ${LM_STUDIO_URL}"
+    echo "  Model:     ${variant}"
+  else
+    # Cloud model
+    local idx=$(( opt - num_local - 1 ))
+    model_flag="${CLOUD_MODELS[$idx]}"
+    model_display="${CLOUD_DISPLAY[$idx]}"
+
+    unset ANTHROPIC_BASE_URL
+    unset ANTHROPIC_AUTH_TOKEN
+    echo "Using cloud model: ${model_display}"
+    echo "  Model:     ${model_flag}"
+  fi
+
+  export ANTHROPIC_MODEL="${model_flag}"
+
+  echo ""
+  echo "Starting Claude Code..."
+  echo ""
+
+  # ── Run Claude Code ────────────────────────────────────────────
+  claude
+
+  # After claude exits, the EXIT trap fires and restores environment
+}
+
+main "$@"
