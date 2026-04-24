@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # llmc — Launch an LLM coding assistant with a local or cloud model.
-# Usage: llmc [claude|codex]  (default: claude)
+# Usage: llmc [claude|codex] [local-llm-url]  (defaults: claude, http://localhost:1234)
 #
 set -euo pipefail
 
@@ -110,8 +110,10 @@ main() {
   local BACKEND="${1:-claude}"
   case "$BACKEND" in
     claude|codex) ;;
-    *) echo "Usage: llmc [claude|codex]" >&2; exit 1 ;;
+    *) echo "Usage: llmc [claude|codex] [local-llm-url]" >&2; exit 1 ;;
   esac
+  LM_STUDIO_URL="${2:-${LM_STUDIO_URL}}"
+  LM_STUDIO_MODELS_API="${LM_STUDIO_URL}/api/v1/models"
 
   local -a CLOUD_MODELS CLOUD_DISPLAY
   case "$BACKEND" in
