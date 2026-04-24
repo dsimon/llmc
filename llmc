@@ -71,8 +71,12 @@ restore_env() {
   fi
 }
 
+is_local() {
+  [[ "$LM_STUDIO_URL" =~ ^https?://(localhost|127\.[0-9]+\.[0-9]+\.[0-9]+)(:[0-9]+)?(/.*)?$ ]]
+}
+
 cleanup() {
-  if [[ -n "${LOADED_LOCAL_MODEL:-}" ]] && command -v lms >/dev/null 2>&1; then
+  if [[ -n "${LOADED_LOCAL_MODEL:-}" ]] && is_local && command -v lms >/dev/null 2>&1; then
     echo ""
     echo "Unloading local model: ${LOADED_LOCAL_MODEL}..."
     lms unload "${LOADED_LOCAL_MODEL}" 2>/dev/null || true
@@ -302,7 +306,7 @@ print(')')
     esac
     model_display="${local_names[$idx]:-$key} (local via LM Studio)"
 
-    if command -v lms >/dev/null 2>&1; then
+    if is_local && command -v lms >/dev/null 2>&1; then
       for (( j = 0; j < num_local; j++ )); do
         if (( ${local_loaded[$j]} > 0 )); then
           echo "Unloading ${local_names[$j]:-${local_keys[$j]}}..."
@@ -312,8 +316,10 @@ print(')')
       echo "Loading ${local_names[$idx]:-$key}..."
       lms load "$key"
       LOADED_LOCAL_MODEL="$key"
-    else
+    elif is_local; then
       echo "Warning: 'lms' command not found; skipping model load/unload."
+    else
+      echo "Note: remote LM Studio URL — skipping lms load/unload."
     fi
 
     case "$BACKEND" in
