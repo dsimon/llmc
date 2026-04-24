@@ -115,7 +115,7 @@ cleanup() {
   if [[ -n "${LOADED_LOCAL_MODEL:-}" ]] && is_local && command -v lms >/dev/null 2>&1; then
     echo ""
     echo "Unloading local model: ${LOADED_LOCAL_MODEL}..."
-    lms unload "${LOADED_LOCAL_MODEL}" 2>/dev/null || true
+    lms unload --all 2>/dev/null || true
   fi
   if [[ -n "${ENV_BACKUP_FILE:-}" ]]; then
     restore_env "$ENV_BACKUP_FILE"
@@ -362,12 +362,16 @@ print(')')
     model_display="${local_names[$idx]:-$key} (local via LM Studio)"
 
     if is_local && command -v lms >/dev/null 2>&1; then
+      local needs_unload=0
       for (( j = 0; j < num_local; j++ )); do
         if (( ${local_loaded[$j]} > 0 )); then
           echo "Unloading ${local_names[$j]:-${local_keys[$j]}}..."
-          lms unload "${local_keys[$j]}" 2>/dev/null || true
+          needs_unload=1
         fi
       done
+      if (( needs_unload )); then
+        lms unload --all 2>/dev/null || true
+      fi
       echo "Loading ${local_names[$idx]:-$key}..."
       lms load "$key"
       LOADED_LOCAL_MODEL="$key"
