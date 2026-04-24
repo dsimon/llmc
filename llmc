@@ -288,7 +288,7 @@ print(')')
   # ── Prompt for selection ───────────────────────────────────────
   read -p "Choose a model (1-$total, Q/E to quit): " opt
 
-  if [[ "${opt,,}" == "q" || "${opt,,}" == "e" ]]; then
+  if [[ "$opt" == "q" || "$opt" == "Q" || "$opt" == "e" || "$opt" == "E" ]]; then
     echo "Goodbye."
     return 0
   fi
