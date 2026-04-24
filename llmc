@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # llmc — Launch an LLM coding assistant with a local or cloud model.
-# Usage: llmc [claude|codex] [local-llm-url]  (defaults: claude, http://localhost:1234)
+# Usage: llmc [claude|codex|opencode] [local-llm-url]  (defaults: claude, http://localhost:1234)
 #
 set -euo pipefail
 
@@ -41,12 +41,28 @@ CODEX_DISPLAY=(
   "GPT-4o Mini"
 )
 
+OPENCODE_CLOUD_MODELS=(
+  "anthropic/claude-opus-4-7"
+  "anthropic/claude-sonnet-4-6"
+  "anthropic/claude-haiku-4-5-20251001"
+  "openai/o4-mini"
+  "openai/gpt-4o"
+)
+OPENCODE_CLOUD_DISPLAY=(
+  "Claude Opus 4.7 (Anthropic)"
+  "Claude Sonnet 4.6 (Anthropic)"
+  "Claude Haiku 4.5 (Anthropic)"
+  "o4-mini (OpenAI)"
+  "GPT-4o (OpenAI)"
+)
+
 # ── Helpers ────────────────────────────────────────────────────────
 save_env() {
   local backup_file
   backup_file="$(mktemp)"
   for var in ANTHROPIC_MODEL ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN \
-             OPENAI_MODEL OPENAI_BASE_URL OPENAI_API_KEY; do
+             OPENAI_MODEL OPENAI_BASE_URL OPENAI_API_KEY \
+             OPENCODE_CONFIG; do
     if [[ -n "${!var:-}" ]]; then
       echo "${var}=${!var}" >> "$backup_file"
     else
@@ -60,7 +76,8 @@ restore_env() {
   local backup_file="$1"
   if [[ -f "$backup_file" ]]; then
     unset ANTHROPIC_MODEL ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN \
-          OPENAI_MODEL OPENAI_BASE_URL OPENAI_API_KEY 2>/dev/null || true
+          OPENAI_MODEL OPENAI_BASE_URL OPENAI_API_KEY \
+          OPENCODE_CONFIG 2>/dev/null || true
     while IFS='=' read -r key value; do
       [[ "$key" =~ ^# ]] && continue
       [[ -z "$key" ]] && continue
@@ -76,6 +93,10 @@ is_local() {
 }
 
 cleanup() {
+  if [[ -n "${OPENCODE_CONFIG_FILE:-}" ]]; then
+    rm -f "$OPENCODE_CONFIG_FILE"
+    OPENCODE_CONFIG_FILE=""
+  fi
   if [[ -n "${LOADED_LOCAL_MODEL:-}" ]] && is_local && command -v lms >/dev/null 2>&1; then
     echo ""
     echo "Unloading local model: ${LOADED_LOCAL_MODEL}..."
@@ -113,8 +134,8 @@ format_size() {
 main() {
   local BACKEND="${1:-claude}"
   case "$BACKEND" in
-    claude|codex) ;;
-    *) echo "Usage: llmc [claude|codex] [local-llm-url]" >&2; exit 1 ;;
+    claude|codex|opencode) ;;
+    *) echo "Usage: llmc [claude|codex|opencode] [local-llm-url]" >&2; exit 1 ;;
   esac
   local raw_url="${2:-}"
   if [[ -n "$raw_url" ]]; then
@@ -136,6 +157,10 @@ main() {
       CLOUD_MODELS=("${CODEX_MODELS[@]}")
       CLOUD_DISPLAY=("${CODEX_DISPLAY[@]}")
       ;;
+    opencode)
+      CLOUD_MODELS=("${OPENCODE_CLOUD_MODELS[@]}")
+      CLOUD_DISPLAY=("${OPENCODE_CLOUD_DISPLAY[@]}")
+      ;;
   esac
 
   echo "=============================================="
@@ -144,6 +169,7 @@ main() {
   echo ""
 
   # Save environment before any changes
+  OPENCODE_CONFIG_FILE=""
   ENV_BACKUP_FILE="$(save_env)"
   trap cleanup EXIT
 
@@ -270,8 +296,9 @@ print(')')
 
   local cloud_label
   case "$BACKEND" in
-    claude) cloud_label="Cloud LLMs (Anthropic API)" ;;
-    codex)  cloud_label="Cloud LLMs (OpenAI API)" ;;
+    claude)    cloud_label="Cloud LLMs (Anthropic API)" ;;
+    codex)     cloud_label="Cloud LLMs (OpenAI API)" ;;
+    opencode)  cloud_label="Cloud LLMs (opencode)" ;;
   esac
 
   echo "${cloud_label}:"
@@ -307,8 +334,9 @@ print(')')
     local key="${local_keys[$idx]}"
     local variant="${local_variants[$idx]:-$key}"
     case "$BACKEND" in
-      claude) model_flag="openai/${variant}" ;;
-      codex)  model_flag="${variant}" ;;
+      claude)    model_flag="openai/${variant}" ;;
+      codex)     model_flag="${variant}" ;;
+      opencode)  model_flag="lmstudio/${variant}" ;;
     esac
     model_display="${local_names[$idx]:-$key} (local via LM Studio)"
 
@@ -337,6 +365,24 @@ print(')')
         export OPENAI_BASE_URL="${LM_STUDIO_URL}/v1"
         export OPENAI_API_KEY="${OPENAI_API_KEY:-lmstudio}"
         ;;
+      opencode)
+        OPENCODE_CONFIG_FILE="$(mktemp /tmp/llmc-opencode.XXXXXX.json)"
+        python3 -c "
+import json, sys
+config = {
+  'provider': {
+    'lmstudio': {
+      'npm': '@ai-sdk/openai-compatible',
+      'name': 'LM Studio',
+      'options': {'baseURL': sys.argv[3] + '/v1'},
+      'models': {sys.argv[1]: {'name': sys.argv[2]}}
+    }
+  }
+}
+print(json.dumps(config, indent=2))
+" "$variant" "${local_names[$idx]:-$key}" "$LM_STUDIO_URL" > "$OPENCODE_CONFIG_FILE"
+        export OPENCODE_CONFIG="$OPENCODE_CONFIG_FILE"
+        ;;
     esac
 
     echo "Using local model: ${model_display}"
@@ -356,6 +402,9 @@ print(')')
       codex)
         unset OPENAI_BASE_URL
         ;;
+      opencode)
+        unset OPENCODE_CONFIG
+        ;;
     esac
 
     echo "Using cloud model: ${model_display}"
@@ -374,6 +423,9 @@ print(')')
       ;;
     codex)
       codex --model "${model_flag}"
+      ;;
+    opencode)
+      opencode -m "${model_flag}"
       ;;
   esac
 
