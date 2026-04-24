@@ -116,7 +116,14 @@ main() {
     claude|codex) ;;
     *) echo "Usage: llmc [claude|codex] [local-llm-url]" >&2; exit 1 ;;
   esac
-  LM_STUDIO_URL="${2:-${LM_STUDIO_URL}}"
+  local raw_url="${2:-}"
+  if [[ -n "$raw_url" ]]; then
+    if [[ "$raw_url" =~ ^https?:// ]]; then
+      LM_STUDIO_URL="$raw_url"
+    else
+      LM_STUDIO_URL="http://${raw_url}:1234"
+    fi
+  fi
   LM_STUDIO_MODELS_API="${LM_STUDIO_URL}/api/v1/models"
 
   local -a CLOUD_MODELS CLOUD_DISPLAY
