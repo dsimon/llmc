@@ -4,11 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-This repository contains the `claude-code` shell script, which acts as an LLM launcher for Claude Code. It provides an interactive menu to switch between Anthropic cloud models and local models running via LM Studio.
+This repository contains the `llmc` shell script, which acts as an LLM launcher for Claude Code. It provides an interactive menu to switch between Anthropic cloud models and local models running via LM Studio.
 
 ## Usage
 
-Run the `./claude-code` script to launch the interactive model selection menu. No manual model pre-loading is needed — the script handles it automatically.
+Run the `./llmc` script to launch the interactive model selection menu. No manual model pre-loading is needed — the script handles it automatically.
 
 ### Local Models (LM Studio)
 
