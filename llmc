@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # llmc — Launch an LLM coding assistant with a local or cloud model.
-# Usage: llmc [claude|codex|opencode] [local-llm-url]  (defaults: claude, http://localhost:1234)
+# Usage: llmc [claude|codex|opencode|aider] [local-llm-url]  (defaults: claude, http://localhost:1234)
 #
 set -euo pipefail
 
@@ -49,6 +49,21 @@ OPENCODE_CLOUD_MODELS=(
   "openai/gpt-4o"
 )
 OPENCODE_CLOUD_DISPLAY=(
+  "Claude Opus 4.7 (Anthropic)"
+  "Claude Sonnet 4.6 (Anthropic)"
+  "Claude Haiku 4.5 (Anthropic)"
+  "o4-mini (OpenAI)"
+  "GPT-4o (OpenAI)"
+)
+
+AIDER_CLOUD_MODELS=(
+  "claude-opus-4-7"
+  "claude-sonnet-4-6"
+  "claude-haiku-4-5-20251001"
+  "o4-mini"
+  "gpt-4o"
+)
+AIDER_CLOUD_DISPLAY=(
   "Claude Opus 4.7 (Anthropic)"
   "Claude Sonnet 4.6 (Anthropic)"
   "Claude Haiku 4.5 (Anthropic)"
@@ -134,8 +149,8 @@ format_size() {
 main() {
   local BACKEND="${1:-claude}"
   case "$BACKEND" in
-    claude|codex|opencode) ;;
-    *) echo "Usage: llmc [claude|codex|opencode] [local-llm-url]" >&2; exit 1 ;;
+    claude|codex|opencode|aider) ;;
+    *) echo "Usage: llmc [claude|codex|opencode|aider] [local-llm-url]" >&2; exit 1 ;;
   esac
   local raw_url="${2:-}"
   if [[ -n "$raw_url" ]]; then
@@ -160,6 +175,10 @@ main() {
     opencode)
       CLOUD_MODELS=("${OPENCODE_CLOUD_MODELS[@]}")
       CLOUD_DISPLAY=("${OPENCODE_CLOUD_DISPLAY[@]}")
+      ;;
+    aider)
+      CLOUD_MODELS=("${AIDER_CLOUD_MODELS[@]}")
+      CLOUD_DISPLAY=("${AIDER_CLOUD_DISPLAY[@]}")
       ;;
   esac
 
@@ -299,6 +318,7 @@ print(')')
     claude)    cloud_label="Cloud LLMs (Anthropic API)" ;;
     codex)     cloud_label="Cloud LLMs (OpenAI API)" ;;
     opencode)  cloud_label="Cloud LLMs (opencode)" ;;
+    aider)     cloud_label="Cloud LLMs (aider)" ;;
   esac
 
   echo "${cloud_label}:"
@@ -337,6 +357,7 @@ print(')')
       claude)    model_flag="openai/${variant}" ;;
       codex)     model_flag="${variant}" ;;
       opencode)  model_flag="lmstudio/${variant}" ;;
+      aider)     model_flag="openai/${variant}" ;;
     esac
     model_display="${local_names[$idx]:-$key} (local via LM Studio)"
 
@@ -362,6 +383,10 @@ print(')')
         export ANTHROPIC_AUTH_TOKEN="lmstudio"
         ;;
       codex)
+        export OPENAI_BASE_URL="${LM_STUDIO_URL}/v1"
+        export OPENAI_API_KEY="${OPENAI_API_KEY:-lmstudio}"
+        ;;
+      aider)
         export OPENAI_BASE_URL="${LM_STUDIO_URL}/v1"
         export OPENAI_API_KEY="${OPENAI_API_KEY:-lmstudio}"
         ;;
@@ -402,6 +427,9 @@ print(json.dumps(config, indent=2))
       codex)
         unset OPENAI_BASE_URL
         ;;
+      aider)
+        unset OPENAI_BASE_URL
+        ;;
       opencode)
         unset OPENCODE_CONFIG
         ;;
@@ -423,6 +451,9 @@ print(json.dumps(config, indent=2))
       ;;
     codex)
       codex --model "${model_flag}"
+      ;;
+    aider)
+      aider --model "${model_flag}"
       ;;
     opencode)
       opencode -m "${model_flag}"
