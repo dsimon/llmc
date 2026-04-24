@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 #
-# llmc — Launch Claude Code with a local or cloud LLM.
-# Queries LM Studio (localhost:1234) for available local models,
-# shows a menu, runs claude with the selected model, and
-# restores the original environment on exit.
+# llmc — Launch an LLM coding assistant with a local or cloud model.
+# Usage: llmc [claude|codex]  (default: claude)
 #
 set -euo pipefail
 
@@ -11,7 +9,7 @@ set -euo pipefail
 LM_STUDIO_URL="http://localhost:1234"
 LM_STUDIO_MODELS_API="${LM_STUDIO_URL}/api/v1/models"
 
-CLOUD_MODELS=(
+CLAUDE_MODELS=(
   "claude-opus-4-7"
   "claude-sonnet-4-6"
   "claude-haiku-4-5-20251001"
@@ -19,8 +17,8 @@ CLOUD_MODELS=(
   "claude-sonnet-4-20250514"
   "claude-opus-4-20250514"
 )
-CLOUD_DISPLAY=(
-  "Claude Opus 4.6 (latest)"
+CLAUDE_DISPLAY=(
+  "Claude Opus 4.7 (latest)"
   "Claude Sonnet 4.6 (latest)"
   "Claude Haiku 4.5 (latest)"
   "Claude Haiku 4 (older)"
@@ -28,12 +26,27 @@ CLOUD_DISPLAY=(
   "Claude Opus 4 (older)"
 )
 
+CODEX_MODELS=(
+  "o4-mini"
+  "o3"
+  "gpt-4.1"
+  "gpt-4o"
+  "gpt-4o-mini"
+)
+CODEX_DISPLAY=(
+  "o4-mini (latest)"
+  "o3"
+  "GPT-4.1"
+  "GPT-4o"
+  "GPT-4o Mini"
+)
+
 # ── Helpers ────────────────────────────────────────────────────────
 save_env() {
-  # Save current environment state for restoration
   local backup_file
   backup_file="$(mktemp)"
-  for var in ANTHROPIC_MODEL ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN; do
+  for var in ANTHROPIC_MODEL ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN \
+             OPENAI_MODEL OPENAI_BASE_URL OPENAI_API_KEY; do
     if [[ -n "${!var:-}" ]]; then
       echo "${var}=${!var}" >> "$backup_file"
     else
@@ -46,11 +59,8 @@ save_env() {
 restore_env() {
   local backup_file="$1"
   if [[ -f "$backup_file" ]]; then
-    # Unset the vars we may have set
-    unset ANTHROPIC_MODEL 2>/dev/null || true
-    unset ANTHROPIC_BASE_URL 2>/dev/null || true
-    unset ANTHROPIC_AUTH_TOKEN 2>/dev/null || true
-    # Restore saved values
+    unset ANTHROPIC_MODEL ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN \
+          OPENAI_MODEL OPENAI_BASE_URL OPENAI_API_KEY 2>/dev/null || true
     while IFS='=' read -r key value; do
       [[ "$key" =~ ^# ]] && continue
       [[ -z "$key" ]] && continue
@@ -97,8 +107,26 @@ format_size() {
 
 # ── Main ───────────────────────────────────────────────────────────
 main() {
+  local BACKEND="${1:-claude}"
+  case "$BACKEND" in
+    claude|codex) ;;
+    *) echo "Usage: llmc [claude|codex]" >&2; exit 1 ;;
+  esac
+
+  local -a CLOUD_MODELS CLOUD_DISPLAY
+  case "$BACKEND" in
+    claude)
+      CLOUD_MODELS=("${CLAUDE_MODELS[@]}")
+      CLOUD_DISPLAY=("${CLAUDE_DISPLAY[@]}")
+      ;;
+    codex)
+      CLOUD_MODELS=("${CODEX_MODELS[@]}")
+      CLOUD_DISPLAY=("${CODEX_DISPLAY[@]}")
+      ;;
+  esac
+
   echo "=============================================="
-  echo "  llmc — LLM Launcher"
+  echo "  llmc — LLM Launcher (${BACKEND})"
   echo "=============================================="
   echo ""
 
@@ -121,14 +149,12 @@ main() {
   local -a local_loaded=() local_variants=()
 
   if [[ -n "$local_json" ]]; then
-    # Use python3 to parse JSON (more reliable than jq for complex parsing)
     eval "$(python3 -c "
 import json, sys
 
 models = json.loads(sys.argv[1]).get('models', [])
 llms = [m for m in models if m.get('type') == 'llm']
 
-# Print bash arrays
 print('local_keys=(')
 for m in llms:
     print(f'    \"{m[\"key\"]}\"')
@@ -187,7 +213,6 @@ print(')')
 print('local_variants=(')
 for m in llms:
     variants = m.get('variants', [])
-    # Use selected_variant if available, otherwise first variant
     sel = m.get('selected_variant', '')
     if sel:
         print(f'    \"{sel}\"')
@@ -230,7 +255,13 @@ print(')')
     echo ""
   fi
 
-  echo "Cloud LLMs (Anthropic API):"
+  local cloud_label
+  case "$BACKEND" in
+    claude) cloud_label="Cloud LLMs (Anthropic API)" ;;
+    codex)  cloud_label="Cloud LLMs (OpenAI API)" ;;
+  esac
+
+  echo "${cloud_label}:"
   echo "----------------------------------------------"
   for (( i = 0; i < ${#CLOUD_MODELS[@]}; i++ )); do
     local idx=$(( num_local + i + 1 ))
@@ -263,11 +294,13 @@ print(')')
     local idx=$(( opt - 1 ))
     local key="${local_keys[$idx]}"
     local variant="${local_variants[$idx]:-$key}"
-    model_flag="openai/${variant}"
+    case "$BACKEND" in
+      claude) model_flag="openai/${variant}" ;;
+      codex)  model_flag="${variant}" ;;
+    esac
     model_display="${local_names[$idx]:-$key} (local via LM Studio)"
 
     if command -v lms >/dev/null 2>&1; then
-      # Unload any currently loaded models
       for (( j = 0; j < num_local; j++ )); do
         if (( ${local_loaded[$j]} > 0 )); then
           echo "Unloading ${local_names[$j]:-${local_keys[$j]}}..."
@@ -281,8 +314,17 @@ print(')')
       echo "Warning: 'lms' command not found; skipping model load/unload."
     fi
 
-    export ANTHROPIC_BASE_URL="${LM_STUDIO_URL}"
-    export ANTHROPIC_AUTH_TOKEN="lmstudio"
+    case "$BACKEND" in
+      claude)
+        export ANTHROPIC_BASE_URL="${LM_STUDIO_URL}"
+        export ANTHROPIC_AUTH_TOKEN="lmstudio"
+        ;;
+      codex)
+        export OPENAI_BASE_URL="${LM_STUDIO_URL}/v1"
+        export OPENAI_API_KEY="${OPENAI_API_KEY:-lmstudio}"
+        ;;
+    esac
+
     echo "Using local model: ${model_display}"
     echo "  Base URL:  ${LM_STUDIO_URL}"
     echo "  Model:     ${variant}"
@@ -292,22 +334,36 @@ print(')')
     model_flag="${CLOUD_MODELS[$idx]}"
     model_display="${CLOUD_DISPLAY[$idx]}"
 
-    unset ANTHROPIC_BASE_URL
-    unset ANTHROPIC_AUTH_TOKEN
+    case "$BACKEND" in
+      claude)
+        unset ANTHROPIC_BASE_URL
+        unset ANTHROPIC_AUTH_TOKEN
+        ;;
+      codex)
+        unset OPENAI_BASE_URL
+        ;;
+    esac
+
     echo "Using cloud model: ${model_display}"
     echo "  Model:     ${model_flag}"
   fi
 
-  export ANTHROPIC_MODEL="${model_flag}"
-
   echo ""
-  echo "Starting Claude Code..."
+  echo "Starting ${BACKEND}..."
   echo ""
 
-  # ── Run Claude Code ────────────────────────────────────────────
-  claude
+  # ── Run the selected CLI ────────────────────────────────────────
+  case "$BACKEND" in
+    claude)
+      export ANTHROPIC_MODEL="${model_flag}"
+      claude
+      ;;
+    codex)
+      codex --model "${model_flag}"
+      ;;
+  esac
 
-  # After claude exits, the EXIT trap fires and restores environment
+  # After the CLI exits, the EXIT trap fires and restores environment
 }
 
 main "$@"
