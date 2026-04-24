@@ -241,7 +241,7 @@ print(')')
 
   # ── Display menu ───────────────────────────────────────────────
   local opt=0
-  local total=$(( num_local + ${#CLOUD_MODELS[@]} + 1 ))  # +1 for quit
+  local total=$(( num_local + ${#CLOUD_MODELS[@]} ))
 
   if (( num_local > 0 )); then
     echo "Local LLMs (from LM Studio):"
@@ -281,22 +281,21 @@ print(')')
     printf "  %-3s  %-35s  (%s)\n" "$idx" "${CLOUD_DISPLAY[$i]}" "${CLOUD_MODELS[$i]}"
   done
   echo ""
-  printf "  %-3s  %s\n" "$total" "Quit / Exit"
+  printf "  %-3s  %s\n" "Q/E" "Quit / Exit"
   echo ""
   echo "----------------------------------------------"
 
   # ── Prompt for selection ───────────────────────────────────────
-  read -p "Choose a model (1-$total): " opt
+  read -p "Choose a model (1-$total, Q/E to quit): " opt
+
+  if [[ "${opt,,}" == "q" || "${opt,,}" == "e" ]]; then
+    echo "Goodbye."
+    return 0
+  fi
 
   if ! [[ "$opt" =~ ^[0-9]+$ ]] || (( opt < 1 )) || (( opt > total )); then
     echo "Invalid selection."
     return 1
-  fi
-
-  # ── Handle selection ───────────────────────────────────────────
-  if (( opt == total )); then
-    echo "Goodbye."
-    return 0
   fi
 
   local model_flag=""
