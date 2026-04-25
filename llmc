@@ -165,66 +165,157 @@ ensure_config() {
   mkdir -p "${HOME}/.llmc"
   cat > "$LLMC_CONFIG" << 'JSON'
 {
+  "_comment": [
+    "llmc cloud model configuration — ~/.llmc/config.json",
+    "",
+    "STRUCTURE:",
+    "  providers  — named credential + endpoint blocks referenced by model entries.",
+    "  models     — per-backend ordered list of selectable models.",
+    "",
+    "PROVIDER TYPES:",
+    "  'anthropic'         — Anthropic API; sets ANTHROPIC_API_KEY. Used natively by the claude backend.",
+    "  'openai'            — OpenAI API; sets OPENAI_API_KEY. Used natively by codex/aider/opencode.",
+    "  'openai_compatible' — Any OpenAI-compatible endpoint (DeepInfra, OpenRouter, Google, etc.).",
+    "                        When used with the claude backend, llmc starts a LiteLLM proxy",
+    "                        (requires: uv tool install 'litellm[proxy]') that translates",
+    "                        Claude Code's Anthropic-format requests to OpenAI chat/completions.",
+    "                        For other backends the base_url/api_key are set directly.",
+    "",
+    "MODEL ID CONVENTIONS BY PROVIDER:",
+    "  anthropic   — Use Anthropic canonical IDs: claude-opus-4-7, claude-sonnet-4-6, etc.",
+    "  openai      — Use OpenAI canonical IDs: o4-mini, o3, gpt-4o, gpt-4.1, etc.",
+    "  deepinfra   — Use DeepInfra's HuggingFace-style IDs: Org/Model-Name",
+    "                e.g. Qwen/Qwen2.5-Coder-32B-Instruct, meta-llama/Llama-3.3-70B-Instruct",
+    "                Verify at: https://deepinfra.com/models",
+    "  openrouter  — Use OpenRouter's provider/model IDs. IMPORTANT: OpenRouter uses DOTS",
+    "                not dashes for version numbers, e.g. anthropic/claude-opus-4.7 (not 4-7).",
+    "                Verify at: https://openrouter.ai/models",
+    "",
+    "DISPLAY NAMES:",
+    "  The 'display' field is shown in the menu followed by [Provider Name] in brackets.",
+    "  e.g. display='Claude Opus 4.7' with provider='openrouter' shows as:",
+    "       'Claude Opus 4.7 [OpenRouter]'",
+    "  Keep display names short — the provider bracket already identifies the source.",
+    "",
+    "ORDERING CONVENTION (per backend):",
+    "  1. Direct Anthropic/OpenAI API (no proxy, lowest latency)",
+    "  2. OpenRouter equivalents (failover when hitting rate/token limits)",
+    "  3. DeepInfra open-source models (cheap, fast for coding tasks)",
+    "  4. OpenRouter open-source models (DeepInfra failover)",
+    "",
+    "MODEL LIST FORMAT:",
+    "  Each backend's model list is an object with a 'list' array and optional '_comment' keys.",
+    "  The parser also accepts a bare array for backwards compatibility."
+  ],
+
   "providers": {
+    "_comment": "Add new providers here. Each backend picks up any provider listed in its model entries.",
+
     "anthropic": {
       "name": "Anthropic Pro",
       "type": "anthropic",
+      "_comment": "Leave api_key empty to use the ANTHROPIC_API_KEY already in environment (claude login).",
       "api_key": ""
     },
     "openai": {
       "name": "ChatGPT Plus",
       "type": "openai",
+      "_comment": "Leave api_key empty to use the OPENAI_API_KEY already in environment.",
       "api_key": ""
     },
     "deepinfra": {
       "name": "DeepInfra",
       "type": "openai_compatible",
+      "_comment": "Hosts open-source models (Qwen, Llama, Mistral, etc.). No GPT/Claude models.",
       "api_key": "",
       "base_url": "https://api.deepinfra.com/v1/openai"
     },
     "openrouter": {
       "name": "OpenRouter",
       "type": "openai_compatible",
+      "_comment": "Routes to Anthropic, OpenAI, and many open-source providers. Good rate-limit failover.",
       "api_key": "",
       "base_url": "https://openrouter.ai/api/v1"
     },
     "google": {
       "name": "Google AI Studio",
       "type": "openai_compatible",
+      "_comment": "Google AI Studio OpenAI-compatible endpoint. Models: gemini-2.0-flash, gemini-2.5-pro, etc.",
       "api_key": "",
       "base_url": "https://generativelanguage.googleapis.com/v1beta/openai"
     },
     "gemini": {
       "name": "Gemini",
       "type": "openai_compatible",
+      "_comment": "Same endpoint as google above — kept separate so display names can differ.",
       "api_key": "",
       "base_url": "https://generativelanguage.googleapis.com/v1beta/openai"
     }
   },
+
   "models": {
-    "claude": [
-      {"provider": "anthropic", "model": "claude-opus-4-7",         "display": "Claude Opus 4.7"},
-      {"provider": "anthropic", "model": "claude-sonnet-4-6",        "display": "Claude Sonnet 4.6"},
-      {"provider": "anthropic", "model": "claude-haiku-4-5-20251001","display": "Claude Haiku 4.5"}
-    ],
-    "codex": [
-      {"provider": "openai", "model": "o4-mini",  "display": "o4-mini"},
-      {"provider": "openai", "model": "o3",        "display": "o3"},
-      {"provider": "openai", "model": "gpt-4.1",  "display": "GPT-4.1"},
-      {"provider": "openai", "model": "gpt-4o",   "display": "GPT-4o"}
-    ],
-    "opencode": [
-      {"provider": "anthropic", "model": "anthropic/claude-opus-4-7",  "display": "Claude Opus 4.7"},
-      {"provider": "anthropic", "model": "anthropic/claude-sonnet-4-6","display": "Claude Sonnet 4.6"},
-      {"provider": "openai",    "model": "openai/o4-mini",             "display": "o4-mini"},
-      {"provider": "openai",    "model": "openai/gpt-4o",              "display": "GPT-4o"}
-    ],
-    "aider": [
-      {"provider": "anthropic", "model": "claude-opus-4-7",  "display": "Claude Opus 4.7"},
-      {"provider": "anthropic", "model": "claude-sonnet-4-6","display": "Claude Sonnet 4.6"},
-      {"provider": "openai",    "model": "gpt-4o",           "display": "GPT-4o"},
-      {"provider": "openai",    "model": "o4-mini",          "display": "o4-mini"}
-    ]
+    "_comment": "Each entry: {provider, model, display}. Provider must match a key in 'providers' above.",
+
+    "claude": {
+      "_comment": [
+        "Backend: Claude Code CLI (claude).",
+        "anthropic entries use the API directly.",
+        "openai_compatible entries (openrouter, deepinfra) go through a LiteLLM proxy.",
+        "OpenRouter Claude IDs use dots: anthropic/claude-opus-4.7 (verify at openrouter.ai/anthropic)"
+      ],
+      "list": [
+        {"provider": "anthropic", "model": "claude-opus-4-7",          "display": "Claude Opus 4.7"},
+        {"provider": "anthropic", "model": "claude-sonnet-4-6",         "display": "Claude Sonnet 4.6"},
+        {"provider": "anthropic", "model": "claude-haiku-4-5-20251001", "display": "Claude Haiku 4.5"}
+      ]
+    },
+
+    "codex": {
+      "_comment": [
+        "Backend: OpenAI Codex CLI (codex).",
+        "openai entries use the OpenAI API directly (no base_url override).",
+        "OpenRouter OpenAI model IDs include the openai/ prefix: openai/gpt-4o, openai/o4-mini.",
+        "DeepInfra does not host GPT/o-series models — Qwen models are open-source alternatives."
+      ],
+      "list": [
+        {"provider": "openai", "model": "o4-mini", "display": "o4-mini"},
+        {"provider": "openai", "model": "o3",       "display": "o3"},
+        {"provider": "openai", "model": "gpt-4.1",  "display": "GPT-4.1"},
+        {"provider": "openai", "model": "gpt-4o",   "display": "GPT-4o"}
+      ]
+    },
+
+    "opencode": {
+      "_comment": [
+        "Backend: opencode CLI.",
+        "anthropic/openai providers use native opencode model prefixes (anthropic/, openai/).",
+        "openai_compatible providers get a generated config file; model_flag = prov_id/model.",
+        "DeepInfra model IDs are HuggingFace-style (Org/Model); opencode config wraps them."
+      ],
+      "list": [
+        {"provider": "anthropic", "model": "anthropic/claude-opus-4-7",   "display": "Claude Opus 4.7"},
+        {"provider": "anthropic", "model": "anthropic/claude-sonnet-4-6", "display": "Claude Sonnet 4.6"},
+        {"provider": "openai",    "model": "openai/o4-mini",              "display": "o4-mini"},
+        {"provider": "openai",    "model": "openai/gpt-4o",               "display": "GPT-4o"}
+      ]
+    },
+
+    "aider": {
+      "_comment": [
+        "Backend: aider CLI.",
+        "anthropic entries set ANTHROPIC_API_KEY; openai entries set OPENAI_API_KEY.",
+        "openai_compatible entries prepend openai/ to the model name and set OPENAI_BASE_URL,",
+        "so aider uses OpenAI-compatible mode against the provider's endpoint.",
+        "For OpenRouter Anthropic models: aider sends model=anthropic/claude-opus-4.7 to",
+        "OpenRouter's chat/completions endpoint, which it handles correctly."
+      ],
+      "list": [
+        {"provider": "anthropic", "model": "claude-opus-4-7",   "display": "Claude Opus 4.7"},
+        {"provider": "anthropic", "model": "claude-sonnet-4-6", "display": "Claude Sonnet 4.6"},
+        {"provider": "openai",    "model": "gpt-4o",            "display": "GPT-4o"},
+        {"provider": "openai",    "model": "o4-mini",           "display": "o4-mini"}
+      ]
+    }
   }
 }
 JSON
