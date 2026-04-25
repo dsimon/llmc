@@ -88,9 +88,24 @@ start_litellm_proxy() {
   PROXY_PORT=$(python3 -c \
     "import socket; s=socket.socket(); s.bind(('',0)); print(s.getsockname()[1]); s.close()")
 
-  # Write a temporary LiteLLM config
+  # Write a temporary LiteLLM config.
+  # OpenRouter has a native litellm provider (openrouter/) that avoids the
+  # provider-filtering bug that occurs when using the generic openai/ prefix
+  # with an openrouter.ai base_url.
   PROXY_SCRIPT="$(mktemp /tmp/llmc-litellm.XXXXXX.yaml)"
-  cat > "$PROXY_SCRIPT" << YAML
+  if [[ "$base_url" == *"openrouter.ai"* ]]; then
+    cat > "$PROXY_SCRIPT" << YAML
+model_list:
+  - model_name: "${model}"
+    litellm_params:
+      model: "openrouter/${model}"
+      api_key: "${api_key}"
+
+litellm_settings:
+  drop_params: true
+YAML
+  else
+    cat > "$PROXY_SCRIPT" << YAML
 model_list:
   - model_name: "${model}"
     litellm_params:
@@ -101,6 +116,7 @@ model_list:
 litellm_settings:
   drop_params: true
 YAML
+  fi
 
   LITELLM_USE_CHAT_COMPLETIONS_URL_FOR_ANTHROPIC_MESSAGES=true \
     litellm --config "$PROXY_SCRIPT" --port "$PROXY_PORT" \
