@@ -288,6 +288,9 @@ print(')')
   local opt=0
   local total=$(( num_local + ${#CLOUD_MODELS[@]} ))
 
+  printf "  %-3s  %s\n" "0" "Default model (no override)"
+  echo ""
+
   if (( num_local > 0 )); then
     echo "Local LLMs (from LM Studio):"
     echo "----------------------------------------------"
@@ -333,14 +336,15 @@ print(')')
   echo "----------------------------------------------"
 
   # ── Prompt for selection ───────────────────────────────────────
-  read -p "Choose a model (1-$total, Q/E to quit): " opt
+  read -p "Choose a model (0-$total, Q/E to quit) [0]: " opt
+  [[ -z "$opt" ]] && opt=0
 
   if [[ "$opt" == "q" || "$opt" == "Q" || "$opt" == "e" || "$opt" == "E" ]]; then
     echo "Goodbye."
     return 0
   fi
 
-  if ! [[ "$opt" =~ ^[0-9]+$ ]] || (( opt < 1 )) || (( opt > total )); then
+  if ! [[ "$opt" =~ ^[0-9]+$ ]] || (( opt < 0 )) || (( opt > total )); then
     echo "Invalid selection."
     return 1
   fi
@@ -348,7 +352,16 @@ print(')')
   local model_flag=""
   local model_display=""
 
-  if (( opt <= num_local )); then
+  if (( opt == 0 )); then
+    model_display="default (no model override)"
+    case "$BACKEND" in
+      claude)   unset ANTHROPIC_MODEL ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ;;
+      codex)    unset OPENAI_MODEL OPENAI_BASE_URL ;;
+      aider)    unset OPENAI_BASE_URL ;;
+      opencode) unset OPENCODE_CONFIG ;;
+    esac
+    echo "Using ${model_display}"
+  elif (( opt <= num_local )); then
     # Local model from LM Studio
     local idx=$(( opt - 1 ))
     local key="${local_keys[$idx]}"
@@ -450,17 +463,29 @@ print(json.dumps(config, indent=2))
   # ── Run the selected CLI ────────────────────────────────────────
   case "$BACKEND" in
     claude)
-      export ANTHROPIC_MODEL="${model_flag}"
+      [[ -n "${model_flag}" ]] && export ANTHROPIC_MODEL="${model_flag}"
       claude
       ;;
     codex)
-      codex --model "${model_flag}"
+      if [[ -n "${model_flag}" ]]; then
+        codex --model "${model_flag}"
+      else
+        codex
+      fi
       ;;
     aider)
-      aider --model "${model_flag}"
+      if [[ -n "${model_flag}" ]]; then
+        aider --model "${model_flag}"
+      else
+        aider
+      fi
       ;;
     opencode)
-      opencode -m "${model_flag}"
+      if [[ -n "${model_flag}" ]]; then
+        opencode -m "${model_flag}"
+      else
+        opencode
+      fi
       ;;
   esac
 
