@@ -8,74 +8,13 @@ set -euo pipefail
 # ── Configuration ──────────────────────────────────────────────────
 LM_STUDIO_URL="http://localhost:1234"
 LM_STUDIO_MODELS_API="${LM_STUDIO_URL}/api/v1/models"
-
-CLAUDE_MODELS=(
-  "claude-opus-4-7"
-  "claude-sonnet-4-6"
-  "claude-haiku-4-5-20251001"
-  "claude-haiku-4-10-20250414"
-  "claude-sonnet-4-20250514"
-  "claude-opus-4-20250514"
-)
-CLAUDE_DISPLAY=(
-  "Claude Opus 4.7 (latest)"
-  "Claude Sonnet 4.6 (latest)"
-  "Claude Haiku 4.5 (latest)"
-  "Claude Haiku 4 (older)"
-  "Claude Sonnet 4 (older)"
-  "Claude Opus 4 (older)"
-)
-
-CODEX_MODELS=(
-  "o4-mini"
-  "o3"
-  "gpt-4.1"
-  "gpt-4o"
-  "gpt-4o-mini"
-)
-CODEX_DISPLAY=(
-  "o4-mini (latest)"
-  "o3"
-  "GPT-4.1"
-  "GPT-4o"
-  "GPT-4o Mini"
-)
-
-OPENCODE_CLOUD_MODELS=(
-  "anthropic/claude-opus-4-7"
-  "anthropic/claude-sonnet-4-6"
-  "anthropic/claude-haiku-4-5-20251001"
-  "openai/o4-mini"
-  "openai/gpt-4o"
-)
-OPENCODE_CLOUD_DISPLAY=(
-  "Claude Opus 4.7 (Anthropic)"
-  "Claude Sonnet 4.6 (Anthropic)"
-  "Claude Haiku 4.5 (Anthropic)"
-  "o4-mini (OpenAI)"
-  "GPT-4o (OpenAI)"
-)
-
-AIDER_CLOUD_MODELS=(
-  "claude-opus-4-7"
-  "claude-sonnet-4-6"
-  "claude-haiku-4-5-20251001"
-  "o4-mini"
-  "gpt-4o"
-)
-AIDER_CLOUD_DISPLAY=(
-  "Claude Opus 4.7 (Anthropic)"
-  "Claude Sonnet 4.6 (Anthropic)"
-  "Claude Haiku 4.5 (Anthropic)"
-  "o4-mini (OpenAI)"
-  "GPT-4o (OpenAI)"
-)
+LLMC_CONFIG="${HOME}/.llmc/config.json"
 
 # ── Helpers ────────────────────────────────────────────────────────
 save_env() {
   local backup_file
   backup_file="$(mktemp)"
-  for var in ANTHROPIC_MODEL ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN \
+  for var in ANTHROPIC_MODEL ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_API_KEY \
              OPENAI_MODEL OPENAI_BASE_URL OPENAI_API_KEY \
              OPENCODE_CONFIG; do
     if [[ -n "${!var:-}" ]]; then
@@ -90,7 +29,7 @@ save_env() {
 restore_env() {
   local backup_file="$1"
   if [[ -f "$backup_file" ]]; then
-    unset ANTHROPIC_MODEL ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN \
+    unset ANTHROPIC_MODEL ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_API_KEY \
           OPENAI_MODEL OPENAI_BASE_URL OPENAI_API_KEY \
           OPENCODE_CONFIG 2>/dev/null || true
     while IFS='=' read -r key value; do
@@ -145,6 +84,137 @@ format_size() {
   fi
 }
 
+# ── Config: create ~/.llmc/config.json template if missing ─────────
+ensure_config() {
+  [[ -f "$LLMC_CONFIG" ]] && return 0
+  mkdir -p "${HOME}/.llmc"
+  cat > "$LLMC_CONFIG" << 'JSON'
+{
+  "providers": {
+    "anthropic": {
+      "name": "Anthropic Pro",
+      "type": "anthropic",
+      "api_key": ""
+    },
+    "openai": {
+      "name": "ChatGPT Plus",
+      "type": "openai",
+      "api_key": ""
+    },
+    "deepinfra": {
+      "name": "DeepInfra",
+      "type": "openai_compatible",
+      "api_key": "",
+      "base_url": "https://api.deepinfra.com/v1/openai"
+    },
+    "openrouter": {
+      "name": "OpenRouter",
+      "type": "openai_compatible",
+      "api_key": "",
+      "base_url": "https://openrouter.ai/api/v1"
+    },
+    "google": {
+      "name": "Google AI Studio",
+      "type": "openai_compatible",
+      "api_key": "",
+      "base_url": "https://generativelanguage.googleapis.com/v1beta/openai"
+    },
+    "gemini": {
+      "name": "Gemini",
+      "type": "openai_compatible",
+      "api_key": "",
+      "base_url": "https://generativelanguage.googleapis.com/v1beta/openai"
+    }
+  },
+  "models": {
+    "claude": [
+      {"provider": "anthropic", "model": "claude-opus-4-7",         "display": "Claude Opus 4.7"},
+      {"provider": "anthropic", "model": "claude-sonnet-4-6",        "display": "Claude Sonnet 4.6"},
+      {"provider": "anthropic", "model": "claude-haiku-4-5-20251001","display": "Claude Haiku 4.5"}
+    ],
+    "codex": [
+      {"provider": "openai", "model": "o4-mini",  "display": "o4-mini"},
+      {"provider": "openai", "model": "o3",        "display": "o3"},
+      {"provider": "openai", "model": "gpt-4.1",  "display": "GPT-4.1"},
+      {"provider": "openai", "model": "gpt-4o",   "display": "GPT-4o"}
+    ],
+    "opencode": [
+      {"provider": "anthropic", "model": "anthropic/claude-opus-4-7",  "display": "Claude Opus 4.7"},
+      {"provider": "anthropic", "model": "anthropic/claude-sonnet-4-6","display": "Claude Sonnet 4.6"},
+      {"provider": "openai",    "model": "openai/o4-mini",             "display": "o4-mini"},
+      {"provider": "openai",    "model": "openai/gpt-4o",              "display": "GPT-4o"}
+    ],
+    "aider": [
+      {"provider": "anthropic", "model": "claude-opus-4-7",  "display": "Claude Opus 4.7"},
+      {"provider": "anthropic", "model": "claude-sonnet-4-6","display": "Claude Sonnet 4.6"},
+      {"provider": "openai",    "model": "gpt-4o",           "display": "GPT-4o"},
+      {"provider": "openai",    "model": "o4-mini",          "display": "o4-mini"}
+    ]
+  }
+}
+JSON
+  echo "Created config template: ${LLMC_CONFIG}"
+  echo "Edit it to add your API keys and configure cloud models."
+  echo ""
+}
+
+# ── Load cloud models from ~/.llmc/config.json ─────────────────────
+# Populates: CLOUD_MODEL_IDS, CLOUD_DISPLAY, CLOUD_PROV_IDS,
+#            CLOUD_PROV_TYPES, CLOUD_API_KEYS, CLOUD_BASE_URLS
+load_cloud_config() {
+  local backend="$1"
+  CLOUD_MODEL_IDS=()
+  CLOUD_DISPLAY=()
+  CLOUD_PROV_IDS=()
+  CLOUD_PROV_TYPES=()
+  CLOUD_API_KEYS=()
+  CLOUD_BASE_URLS=()
+
+  [[ ! -f "$LLMC_CONFIG" ]] && return 0
+
+  local tmppy
+  tmppy="$(mktemp /tmp/llmc-cfg.XXXXXX.py)"
+  cat > "$tmppy" << 'PYEOF'
+import json, sys
+
+config_file, backend = sys.argv[1], sys.argv[2]
+
+try:
+    with open(config_file) as f:
+        cfg = json.load(f)
+except Exception as e:
+    sys.stderr.write(f'llmc: config error: {e}\n')
+    sys.exit(0)
+
+providers = cfg.get('providers', {})
+models = cfg.get('models', {}).get(backend, [])
+
+def sq(s):
+    return "'" + str(s).replace("'", "'\\''") + "'"
+
+arrays = [
+    ('CLOUD_MODEL_IDS',  [m.get('model', '')                                                      for m in models]),
+    ('CLOUD_PROV_IDS',   [m.get('provider', '')                                                   for m in models]),
+    ('CLOUD_PROV_TYPES', [providers.get(m.get('provider',''), {}).get('type', 'openai_compatible') for m in models]),
+    ('CLOUD_API_KEYS',   [providers.get(m.get('provider',''), {}).get('api_key', '')               for m in models]),
+    ('CLOUD_BASE_URLS',  [providers.get(m.get('provider',''), {}).get('base_url', '')              for m in models]),
+    ('CLOUD_DISPLAY',    [
+        m.get('display', m.get('model', '')) + ' ['
+        + providers.get(m.get('provider',''), {}).get('name', m.get('provider','')) + ']'
+        for m in models
+    ]),
+]
+
+for name, values in arrays:
+    print(f'{name}=(')
+    for v in values:
+        print(f'  {sq(v)}')
+    print(')')
+PYEOF
+  eval "$(python3 "$tmppy" "$LLMC_CONFIG" "$backend")"
+  rm -f "$tmppy"
+}
+
 # ── Main ───────────────────────────────────────────────────────────
 main() {
   local BACKEND="${1:-claude}"
@@ -162,25 +232,9 @@ main() {
   fi
   LM_STUDIO_MODELS_API="${LM_STUDIO_URL}/api/v1/models"
 
-  local -a CLOUD_MODELS CLOUD_DISPLAY
-  case "$BACKEND" in
-    claude)
-      CLOUD_MODELS=("${CLAUDE_MODELS[@]}")
-      CLOUD_DISPLAY=("${CLAUDE_DISPLAY[@]}")
-      ;;
-    codex)
-      CLOUD_MODELS=("${CODEX_MODELS[@]}")
-      CLOUD_DISPLAY=("${CODEX_DISPLAY[@]}")
-      ;;
-    opencode)
-      CLOUD_MODELS=("${OPENCODE_CLOUD_MODELS[@]}")
-      CLOUD_DISPLAY=("${OPENCODE_CLOUD_DISPLAY[@]}")
-      ;;
-    aider)
-      CLOUD_MODELS=("${AIDER_CLOUD_MODELS[@]}")
-      CLOUD_DISPLAY=("${AIDER_CLOUD_DISPLAY[@]}")
-      ;;
-  esac
+  ensure_config
+  local -a CLOUD_MODEL_IDS CLOUD_DISPLAY CLOUD_PROV_IDS CLOUD_PROV_TYPES CLOUD_API_KEYS CLOUD_BASE_URLS
+  load_cloud_config "$BACKEND"
 
   echo "=============================================="
   echo "  llmc — LLM Launcher (${BACKEND})"
@@ -282,7 +336,7 @@ print(')')
 
   # ── Display menu ───────────────────────────────────────────────
   local opt=0
-  local total=$(( num_local + ${#CLOUD_MODELS[@]} ))
+  local total=$(( num_local + ${#CLOUD_MODEL_IDS[@]} ))
 
   printf "  %-3s  %s\n" "0" "Default model (no override)"
   echo ""
@@ -322,10 +376,14 @@ print(')')
 
   echo "${cloud_label}:"
   echo "----------------------------------------------"
-  for (( i = 0; i < ${#CLOUD_MODELS[@]}; i++ )); do
-    local idx=$(( num_local + i + 1 ))
-    printf "  %-3s  %-35s  (%s)\n" "$idx" "${CLOUD_DISPLAY[$i]}" "${CLOUD_MODELS[$i]}"
-  done
+  if (( ${#CLOUD_MODEL_IDS[@]} > 0 )); then
+    for (( i = 0; i < ${#CLOUD_MODEL_IDS[@]}; i++ )); do
+      local idx=$(( num_local + i + 1 ))
+      printf "  %-3s  %-40s  (%s)\n" "$idx" "${CLOUD_DISPLAY[$i]}" "${CLOUD_MODEL_IDS[$i]}"
+    done
+  else
+    echo "  (none configured — edit ${LLMC_CONFIG})"
+  fi
   echo ""
   printf "  %-3s  %s\n" "Q/E" "Quit / Exit"
   echo ""
@@ -427,29 +485,75 @@ print(json.dumps(config, indent=2))
     echo "  Base URL:  ${LM_STUDIO_URL}"
     echo "  Model:     ${variant}"
   else
-    # Cloud model
-    local idx=$(( opt - num_local - 1 ))
-    model_flag="${CLOUD_MODELS[$idx]}"
-    model_display="${CLOUD_DISPLAY[$idx]}"
+    # Cloud model from config
+    local cidx=$(( opt - num_local - 1 ))
+    local raw_model="${CLOUD_MODEL_IDS[$cidx]}"
+    local prov_id="${CLOUD_PROV_IDS[$cidx]}"
+    local ptype="${CLOUD_PROV_TYPES[$cidx]}"
+    local api_key="${CLOUD_API_KEYS[$cidx]}"
+    local base_url="${CLOUD_BASE_URLS[$cidx]}"
+    model_display="${CLOUD_DISPLAY[$cidx]}"
 
     case "$BACKEND" in
       claude)
-        unset ANTHROPIC_BASE_URL
-        unset ANTHROPIC_AUTH_TOKEN
+        unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN
+        if [[ "$ptype" == "anthropic" ]]; then
+          model_flag="$raw_model"
+          [[ -n "$api_key" ]] && export ANTHROPIC_API_KEY="$api_key"
+        else
+          model_flag="openai/${raw_model}"
+          export ANTHROPIC_BASE_URL="$base_url"
+          export ANTHROPIC_AUTH_TOKEN="$api_key"
+        fi
         ;;
       codex)
         unset OPENAI_BASE_URL
+        model_flag="$raw_model"
+        [[ -n "$api_key" ]] && export OPENAI_API_KEY="$api_key"
+        [[ -n "$base_url" ]] && export OPENAI_BASE_URL="$base_url"
         ;;
       aider)
         unset OPENAI_BASE_URL
+        if [[ "$ptype" == "anthropic" ]]; then
+          model_flag="$raw_model"
+          [[ -n "$api_key" ]] && export ANTHROPIC_API_KEY="$api_key"
+        else
+          model_flag="openai/${raw_model}"
+          [[ -n "$api_key" ]] && export OPENAI_API_KEY="$api_key"
+          [[ -n "$base_url" ]] && export OPENAI_BASE_URL="$base_url"
+        fi
         ;;
       opencode)
         unset OPENCODE_CONFIG
+        if [[ "$ptype" == "anthropic" || "$ptype" == "openai" ]]; then
+          model_flag="$raw_model"
+          [[ "$ptype" == "anthropic" && -n "$api_key" ]] && export ANTHROPIC_API_KEY="$api_key"
+          [[ "$ptype" == "openai"    && -n "$api_key" ]] && export OPENAI_API_KEY="$api_key"
+        else
+          OPENCODE_CONFIG_FILE="$(mktemp /tmp/llmc-opencode.XXXXXX.json)"
+          python3 -c "
+import json, sys
+prov_id, model_id, display, base_url, api_key = sys.argv[1:]
+config = {
+  'provider': {
+    prov_id: {
+      'npm': '@ai-sdk/openai-compatible',
+      'name': display,
+      'options': {'baseURL': base_url, 'apiKey': api_key},
+      'models': {model_id: {'name': display}}
+    }
+  }
+}
+print(json.dumps(config, indent=2))
+" "$prov_id" "$raw_model" "$model_display" "$base_url" "$api_key" > "$OPENCODE_CONFIG_FILE"
+          export OPENCODE_CONFIG="$OPENCODE_CONFIG_FILE"
+          model_flag="${prov_id}/${raw_model}"
+        fi
         ;;
     esac
 
     echo "Using cloud model: ${model_display}"
-    echo "  Model:     ${model_flag}"
+    echo "  Model:     ${raw_model}"
   fi
 
   echo ""
