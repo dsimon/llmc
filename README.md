@@ -34,7 +34,7 @@ ln -s "$PWD/llmc" /usr/local/bin/llmc   # or wherever you keep local scripts
 
 | Dependency | Required for |
 |------------|-------------|
-| `bash` 4+ | Script runtime (macOS ships bash 3; install via `brew install bash`) |
+| `bash` 3+ | macOS ships bash 3 |
 | `python3` | LM Studio model parsing, config loading |
 | `curl` | LM Studio API calls |
 | `bc` | Human-readable model size formatting |
