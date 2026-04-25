@@ -37,7 +37,7 @@ Per-backend ordered lists of selectable models. Each entry:
 {"provider": "<provider-key>", "model": "<model-id>", "display": "<menu label>"}
 ```
 
-The menu shows `"<display> [<provider.name>]"` for each entry. Each backend's list is a `list` array nested in an object (to allow `_comment` keys alongside it).
+The menu shows `"<display> [<provider.name>]"` for each entry. Each backend's list is a `list` array nested in an object (to allow `_comment` keys alongside it). The config template generated on first run includes full `_comment` documentation explaining all conventions.
 
 ### Model ID conventions by provider
 | Provider | Format | Example |
@@ -73,7 +73,7 @@ Claude Code always sends Anthropic-format requests (`POST /v1/messages`) regardl
 
 1. Starting a **LiteLLM proxy** (`uv tool install 'litellm[proxy]'` required) on a random localhost port
 2. Setting `ANTHROPIC_BASE_URL=http://127.0.0.1:<port>` so Claude Code routes to the proxy
-3. Setting `ANTHROPIC_API_KEY=llmc-proxy` (dummy) to force API-key mode over claude.ai session
+3. Setting `ANTHROPIC_AUTH_TOKEN=llmc-proxy` (dummy) to override the claude.ai session token without triggering the API-key conflict warning
 4. LiteLLM translates Anthropic→OpenAI and forwards to the provider
 
 LiteLLM is started with `LITELLM_USE_CHAT_COMPLETIONS_URL_FOR_ANTHROPIC_MESSAGES=true` and `drop_params: true` (strips unsupported params like `reasoning_effort`).
@@ -92,8 +92,8 @@ The script saves and restores all of these on exit:
 |----------|---------|
 | `ANTHROPIC_MODEL` | claude (local models) |
 | `ANTHROPIC_BASE_URL` | claude (local + openai_compatible cloud) |
-| `ANTHROPIC_AUTH_TOKEN` | claude (local models) |
-| `ANTHROPIC_API_KEY` | claude (anthropic + openai_compatible cloud) |
+| `ANTHROPIC_AUTH_TOKEN` | claude (local models + openai_compatible cloud proxy) |
+| `ANTHROPIC_API_KEY` | claude (anthropic cloud) |
 | `OPENAI_MODEL` | codex |
 | `OPENAI_BASE_URL` | codex/aider (local + openai_compatible cloud) |
 | `OPENAI_API_KEY` | codex/aider (openai + openai_compatible cloud) |
