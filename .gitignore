@@ -1,2 +1,6 @@
 .claude/memory/
 *.env
+
+# User config with credentials lives in ~/.llmc/ — never in the repo
+config.json
+*.credentials.json
