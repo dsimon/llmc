@@ -214,6 +214,7 @@ def stream_oai_to_ant(resp, model, wfile):
         if data_str == '[DONE]': break
         try: chunk = json.loads(data_str)
         except: continue
+        if not isinstance(chunk, dict): continue
         choice = (chunk.get('choices') or [{}])[0]
         delta = choice.get('delta', {})
         fr = choice.get('finish_reason')
