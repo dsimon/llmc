@@ -503,7 +503,7 @@ print(json.dumps(config, indent=2))
         else
           model_flag="openai/${raw_model}"
           export ANTHROPIC_BASE_URL="$base_url"
-          export ANTHROPIC_AUTH_TOKEN="$api_key"
+          [[ -n "$api_key" ]] && export ANTHROPIC_API_KEY="$api_key"
         fi
         ;;
       codex)
