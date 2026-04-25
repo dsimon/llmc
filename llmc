@@ -99,7 +99,8 @@ model_list:
       api_key: "${api_key}"
 YAML
 
-  litellm --config "$PROXY_SCRIPT" --port "$PROXY_PORT" \
+  LITELLM_USE_CHAT_COMPLETIONS_URL_FOR_ANTHROPIC_MESSAGES=true \
+    litellm --config "$PROXY_SCRIPT" --port "$PROXY_PORT" \
     > /tmp/llmc-litellm.log 2>&1 &
   PROXY_PID=$!
 
