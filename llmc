@@ -80,13 +80,17 @@ start_proxy() {
   port_file="$(mktemp /tmp/llmc-proxy-port.XXXXXX)"
 
   cat > "$PROXY_SCRIPT" << 'PYEOF'
-import sys, socket, http.client, json
+import sys, http.client, json, datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse
 
-upstream_url, api_key, port_file = sys.argv[1], sys.argv[2], sys.argv[3]
+upstream_url, api_key, port_file, log_file = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 p = urlparse(upstream_url)
 uphost, uppath, use_ssl = p.netloc, p.path, p.scheme == 'https'
+
+def log(msg):
+    with open(log_file, 'a') as f:
+        f.write(f"[{datetime.datetime.now().isoformat()}] {msg}\n")
 
 class H(BaseHTTPRequestHandler):
     def relay(self, method, body=None):
@@ -99,8 +103,11 @@ class H(BaseHTTPRequestHandler):
         }
         if body is not None:
             h['Content-Length'] = str(len(body))
-        c.request(method, uppath + self.path, body=body, headers=h)
+        target = uppath + self.path
+        log(f"{method} {target}")
+        c.request(method, target, body=body, headers=h)
         r = c.getresponse()
+        log(f"Response: {r.status}")
         self.send_response(r.status)
         for k, v in r.getheaders():
             if k.lower() not in ('transfer-encoding', 'connection'):
@@ -119,11 +126,13 @@ class H(BaseHTTPRequestHandler):
         try:
             d = json.loads(body)
             m = d.get('model', '')
+            log(f"Model in request: {m!r}")
             if m.startswith('openai/'):
                 d['model'] = m[len('openai/'):]
+                log(f"Stripped to: {d['model']!r}")
             body = json.dumps(d).encode()
-        except Exception:
-            pass
+        except Exception as e:
+            log(f"Parse error: {e}")
         self.relay('POST', body)
 
     def do_GET(self):
@@ -132,18 +141,22 @@ class H(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
-with socket.socket() as s:
-    s.bind(('127.0.0.1', 0))
-    port = s.getsockname()[1]
+# Bind to port 0 so the OS assigns a free port; server is ready when constructor returns
+server = HTTPServer(('127.0.0.1', 0), H)
+port = server.server_address[1]
+log(f"Proxy ready on port {port}, upstream={upstream_url}")
 open(port_file, 'w').write(str(port))
-HTTPServer(('127.0.0.1', port), H).serve_forever()
+server.serve_forever()
 PYEOF
 
-  python3 "$PROXY_SCRIPT" "$upstream" "$api_key" "$port_file" &
+  local log_file="/tmp/llmc-proxy.log"
+  : > "$log_file"
+
+  python3 "$PROXY_SCRIPT" "$upstream" "$api_key" "$port_file" "$log_file" &
   PROXY_PID=$!
 
   local elapsed=0
-  while [[ ! -s "$port_file" ]] && (( elapsed < 30 )); do
+  while [[ ! -s "$port_file" ]] && (( elapsed < 50 )); do
     sleep 0.1
     elapsed=$(( elapsed + 1 ))
   done
@@ -152,9 +165,10 @@ PYEOF
   rm -f "$port_file"
 
   if [[ -z "${PROXY_PORT:-}" ]]; then
-    echo "Error: failed to start local proxy." >&2
+    echo "Error: failed to start local proxy (check ${log_file})" >&2
     return 1
   fi
+  echo "  Proxy log: ${log_file}"
 }
 
 # ── Fetch local models from LM Studio ──────────────────────────────
