@@ -501,9 +501,15 @@ print(json.dumps(config, indent=2))
           model_flag="$raw_model"
           [[ -n "$api_key" ]] && export ANTHROPIC_API_KEY="$api_key"
         else
-          model_flag="$raw_model"
+          model_flag="openai/${raw_model}"
           export ANTHROPIC_BASE_URL="$base_url"
           [[ -n "$api_key" ]] && export ANTHROPIC_API_KEY="$api_key"
+          echo ""
+          echo "⚠  External provider note: Claude Code ignores ANTHROPIC_BASE_URL"
+          echo "   when you are logged into claude.ai via 'claude login'."
+          echo "   If you see a model-not-found error, run 'claude /logout' first,"
+          echo "   then re-run llmc.  Use 'claude login' afterward to restore."
+          echo ""
         fi
         ;;
       codex)
