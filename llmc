@@ -194,11 +194,7 @@ main() {
 
   # ── Fetch local models ─────────────────────────────────────────
   local local_json
-  if ! local_json="$(fetch_local_models)"; then
-    echo "Warning: Cannot connect to LM Studio at ${LM_STUDIO_URL}"
-    echo "  Make sure LM Studio is running with its local server enabled."
-    echo ""
-  fi
+  local_json="$(fetch_local_models)" || true
 
   # Parse local LLMs into arrays
   local -a local_keys=() local_names=() local_archs=()
