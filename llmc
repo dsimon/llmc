@@ -97,6 +97,9 @@ model_list:
       model: "openai/${model}"
       api_base: "${base_url}"
       api_key: "${api_key}"
+
+litellm_settings:
+  drop_params: true
 YAML
 
   LITELLM_USE_CHAT_COMPLETIONS_URL_FOR_ANTHROPIC_MESSAGES=true \
