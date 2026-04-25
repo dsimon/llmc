@@ -80,69 +80,260 @@ start_proxy() {
   port_file="$(mktemp /tmp/llmc-proxy-port.XXXXXX)"
 
   cat > "$PROXY_SCRIPT" << 'PYEOF'
-import sys, http.client, json, datetime
+"""
+llmc proxy: translates Anthropic Messages API -> OpenAI Chat Completions API.
+Claude Code always uses ANTHROPIC_BASE_URL with Anthropic-format requests even
+for openai/-prefixed models. External providers only speak OpenAI format.
+"""
+import sys, json, uuid, datetime, http.client
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse
 
 upstream_url, api_key, port_file, log_file = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 p = urlparse(upstream_url)
-uphost, uppath, use_ssl = p.netloc, p.path, p.scheme == 'https'
+uphost = p.netloc
+upbase = p.path.rstrip('/')   # e.g. /v1/openai
+use_ssl = p.scheme == 'https'
 
 def log(msg):
     with open(log_file, 'a') as f:
         f.write(f"[{datetime.datetime.now().isoformat()}] {msg}\n")
 
-class H(BaseHTTPRequestHandler):
-    def relay(self, method, body=None):
-        C = http.client.HTTPSConnection if use_ssl else http.client.HTTPConnection
-        c = C(uphost)
-        h = {
-            'Authorization': f'Bearer {api_key}',
-            'Content-Type':  'application/json',
-            'Accept':        self.headers.get('Accept', 'application/json'),
-        }
-        if body is not None:
-            h['Content-Length'] = str(len(body))
-        target = uppath + self.path
-        log(f"{method} {target}")
-        c.request(method, target, body=body, headers=h)
-        r = c.getresponse()
-        log(f"Response: {r.status}")
-        self.send_response(r.status)
-        for k, v in r.getheaders():
-            if k.lower() not in ('transfer-encoding', 'connection'):
-                self.send_header(k, v)
-        self.end_headers()
-        while True:
-            chunk = r.read(8192)
-            if not chunk:
-                break
-            self.wfile.write(chunk)
-            self.wfile.flush()
+# ── Format translation helpers ──────────────────────────────────────
 
+def ant_msgs_to_oai(ant_msgs):
+    out = []
+    for msg in ant_msgs:
+        role = msg['role']
+        content = msg.get('content', '')
+        if isinstance(content, str):
+            out.append({'role': role, 'content': content})
+            continue
+        texts, tool_calls, tool_results = [], [], []
+        for blk in content:
+            t = blk.get('type', '')
+            if t == 'text':
+                texts.append(blk.get('text', ''))
+            elif t == 'tool_use':
+                tool_calls.append({
+                    'id': blk.get('id', f'call_{uuid.uuid4().hex[:8]}'),
+                    'type': 'function',
+                    'function': {'name': blk.get('name', ''),
+                                 'arguments': json.dumps(blk.get('input', {}))}
+                })
+            elif t == 'tool_result':
+                rc = blk.get('content', '')
+                if isinstance(rc, list):
+                    rc = ''.join(b.get('text','') for b in rc if b.get('type')=='text')
+                tool_results.append({'role': 'tool',
+                                     'tool_call_id': blk.get('tool_use_id',''),
+                                     'content': str(rc)})
+        if tool_results:
+            out.extend(tool_results)
+        elif tool_calls:
+            m = {'role': 'assistant', 'tool_calls': tool_calls}
+            if texts:
+                m['content'] = ''.join(texts)
+            out.append(m)
+        else:
+            out.append({'role': role, 'content': ''.join(texts)})
+    return out
+
+def ant_tools_to_oai(tools):
+    return [{'type': 'function',
+             'function': {'name': t['name'],
+                          'description': t.get('description',''),
+                          'parameters': t.get('input_schema',{})}}
+            for t in tools]
+
+def translate_request(body_bytes):
+    d = json.loads(body_bytes)
+    model = d.get('model', '')
+    if model.startswith('openai/'):
+        model = model[len('openai/'):]
+    msgs = []
+    sys_prompt = d.get('system')
+    if sys_prompt:
+        if isinstance(sys_prompt, list):
+            sys_prompt = ''.join(b.get('text','') for b in sys_prompt if b.get('type')=='text')
+        msgs.append({'role': 'system', 'content': sys_prompt})
+    msgs.extend(ant_msgs_to_oai(d.get('messages', [])))
+    oai = {'model': model, 'messages': msgs,
+           'max_tokens': d.get('max_tokens', 4096),
+           'stream': d.get('stream', False)}
+    for f in ('temperature', 'top_p', 'stop'):
+        if f in d:
+            oai[f] = d[f]
+    if d.get('tools'):
+        oai['tools'] = ant_tools_to_oai(d['tools'])
+    return model, json.dumps(oai).encode()
+
+def oai_resp_to_ant(body_bytes, model):
+    d = json.loads(body_bytes)
+    choice = (d.get('choices') or [{}])[0]
+    msg = choice.get('message', {})
+    fr = choice.get('finish_reason', 'stop')
+    usage = d.get('usage', {})
+    content = []
+    if msg.get('content'):
+        content.append({'type': 'text', 'text': msg['content']})
+    for tc in (msg.get('tool_calls') or []):
+        try: inp = json.loads(tc['function']['arguments'])
+        except: inp = {}
+        content.append({'type': 'tool_use',
+                        'id': tc.get('id', f'toolu_{uuid.uuid4().hex[:12]}'),
+                        'name': tc['function']['name'], 'input': inp})
+    stop_map = {'stop':'end_turn','length':'max_tokens','tool_calls':'tool_use'}
+    return json.dumps({
+        'id': d.get('id', f'msg_{uuid.uuid4().hex[:12]}'),
+        'type': 'message', 'role': 'assistant', 'content': content, 'model': model,
+        'stop_reason': stop_map.get(fr, 'end_turn'), 'stop_sequence': None,
+        'usage': {'input_tokens': usage.get('prompt_tokens',0),
+                  'output_tokens': usage.get('completion_tokens',0)}
+    }).encode()
+
+def stream_oai_to_ant(resp, model, wfile):
+    msg_id = f'msg_{uuid.uuid4().hex[:12]}'
+    def send(ev, data):
+        wfile.write(f'event: {ev}\ndata: {json.dumps(data)}\n\n'.encode())
+        wfile.flush()
+    send('message_start', {'type':'message_start','message':{
+        'id':msg_id,'type':'message','role':'assistant','content':[],
+        'model':model,'stop_reason':None,'stop_sequence':None,
+        'usage':{'input_tokens':0,'output_tokens':1}}})
+    text_idx = None
+    next_idx = 0
+    tool_blocks = {}
+    finish_reason = 'stop'
+    output_tokens = 0
+    for raw in resp:
+        if isinstance(raw, bytes): raw = raw.decode('utf-8', errors='replace')
+        raw = raw.rstrip('\r\n')
+        if not raw.startswith('data:'): continue
+        data_str = raw[5:].strip()
+        if data_str == '[DONE]': break
+        try: chunk = json.loads(data_str)
+        except: continue
+        choice = (chunk.get('choices') or [{}])[0]
+        delta = choice.get('delta', {})
+        fr = choice.get('finish_reason')
+        if fr: finish_reason = fr
+        if chunk.get('usage',{}).get('completion_tokens'):
+            output_tokens = chunk['usage']['completion_tokens']
+        if delta.get('content'):
+            if text_idx is None:
+                send('content_block_start', {'type':'content_block_start','index':next_idx,
+                                             'content_block':{'type':'text','text':''}})
+                text_idx = next_idx; next_idx += 1
+            send('content_block_delta', {'type':'content_block_delta','index':text_idx,
+                                         'delta':{'type':'text_delta','text':delta['content']}})
+        for tc in (delta.get('tool_calls') or []):
+            i = tc.get('index', 0)
+            if i not in tool_blocks:
+                if text_idx is not None:
+                    send('content_block_stop', {'type':'content_block_stop','index':text_idx})
+                    text_idx = None
+                bidx = next_idx; next_idx += 1
+                tool_blocks[i] = {'bidx': bidx}
+                send('content_block_start', {'type':'content_block_start','index':bidx,
+                    'content_block':{'type':'tool_use',
+                        'id': tc.get('id', f'toolu_{uuid.uuid4().hex[:12]}'),
+                        'name': tc.get('function',{}).get('name',''), 'input':{}}})
+            if tc.get('function',{}).get('arguments'):
+                send('content_block_delta', {'type':'content_block_delta',
+                    'index':tool_blocks[i]['bidx'],
+                    'delta':{'type':'input_json_delta',
+                             'partial_json':tc['function']['arguments']}})
+    if text_idx is not None:
+        send('content_block_stop', {'type':'content_block_stop','index':text_idx})
+    for tb in tool_blocks.values():
+        send('content_block_stop', {'type':'content_block_stop','index':tb['bidx']})
+    stop_map = {'stop':'end_turn','length':'max_tokens','tool_calls':'tool_use'}
+    send('message_delta', {'type':'message_delta',
+                           'delta':{'stop_reason':stop_map.get(finish_reason,'end_turn'),
+                                    'stop_sequence':None},
+                           'usage':{'output_tokens':output_tokens}})
+    send('message_stop', {'type':'message_stop'})
+
+# ── Request handler ─────────────────────────────────────────────────
+
+class ProxyHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         n = int(self.headers.get('Content-Length', 0))
         body = self.rfile.read(n)
-        try:
-            d = json.loads(body)
-            m = d.get('model', '')
-            log(f"Model in request: {m!r}")
-            if m.startswith('openai/'):
-                d['model'] = m[len('openai/'):]
-                log(f"Stripped to: {d['model']!r}")
-            body = json.dumps(d).encode()
-        except Exception as e:
-            log(f"Parse error: {e}")
-        self.relay('POST', body)
+        if '/messages' in self.path:
+            try:
+                model, oai_body = translate_request(body)
+                streaming = json.loads(oai_body).get('stream', False)
+                log(f"messages→chat/completions model={model} stream={streaming}")
+            except Exception as e:
+                log(f"Translation error: {e}")
+                self.send_error(500, str(e)); return
+            target = upbase + '/chat/completions'
+            headers = {'Authorization': f'Bearer {api_key}',
+                       'Content-Type': 'application/json',
+                       'Content-Length': str(len(oai_body))}
+            if streaming:
+                headers['Accept'] = 'text/event-stream'
+            C = http.client.HTTPSConnection if use_ssl else http.client.HTTPConnection
+            conn = C(uphost)
+            conn.request('POST', target, body=oai_body, headers=headers)
+            resp = conn.getresponse()
+            log(f"Upstream {resp.status} for {target}")
+            if resp.status != 200:
+                err = resp.read()
+                log(f"Error: {err[:300]}")
+                self.send_response(resp.status)
+                self.send_header('Content-Type','application/json')
+                self.end_headers()
+                self.wfile.write(err); return
+            if streaming:
+                self.send_response(200)
+                self.send_header('Content-Type','text/event-stream')
+                self.end_headers()
+                stream_oai_to_ant(resp, model, self.wfile)
+            else:
+                oai_resp = resp.read()
+                try:
+                    ant_resp = oai_resp_to_ant(oai_resp, model)
+                    self.send_response(200)
+                    self.send_header('Content-Type','application/json')
+                    self.send_header('Content-Length', str(len(ant_resp)))
+                    self.end_headers()
+                    self.wfile.write(ant_resp)
+                except Exception as e:
+                    log(f"Response translation error: {e}\nRaw: {oai_resp[:300]}")
+                    self.send_error(500, str(e))
+        else:
+            # Pass through non-messages requests unchanged
+            target = upbase + self.path
+            headers = {'Authorization': f'Bearer {api_key}',
+                       'Content-Type': 'application/json',
+                       'Content-Length': str(len(body))}
+            C = http.client.HTTPSConnection if use_ssl else http.client.HTTPConnection
+            conn = C(uphost)
+            conn.request('POST', target, body=body, headers=headers)
+            resp = conn.getresponse(); rb = resp.read()
+            self.send_response(resp.status)
+            for k,v in resp.getheaders():
+                if k.lower() not in ('transfer-encoding','connection'):
+                    self.send_header(k,v)
+            self.end_headers(); self.wfile.write(rb)
 
     def do_GET(self):
-        self.relay('GET')
+        C = http.client.HTTPSConnection if use_ssl else http.client.HTTPConnection
+        conn = C(uphost)
+        conn.request('GET', upbase + self.path, headers={'Authorization': f'Bearer {api_key}'})
+        resp = conn.getresponse(); rb = resp.read()
+        self.send_response(resp.status)
+        for k,v in resp.getheaders():
+            if k.lower() not in ('transfer-encoding','connection'):
+                self.send_header(k,v)
+        self.end_headers(); self.wfile.write(rb)
 
-    def log_message(self, *a):
-        pass
+    def log_message(self, *a): pass
 
-# Bind to port 0 so the OS assigns a free port; server is ready when constructor returns
-server = HTTPServer(('127.0.0.1', 0), H)
+server = HTTPServer(('127.0.0.1', 0), ProxyHandler)
 port = server.server_address[1]
 log(f"Proxy ready on port {port}, upstream={upstream_url}")
 open(port_file, 'w').write(str(port))
@@ -608,16 +799,24 @@ print(json.dumps(config, indent=2))
 
     case "$BACKEND" in
       claude)
-        unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN
-        unset OPENAI_BASE_URL OPENAI_API_KEY
+        unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN OPENAI_BASE_URL OPENAI_API_KEY
         if [[ "$ptype" == "anthropic" ]]; then
           model_flag="$raw_model"
           [[ -n "$api_key" ]] && export ANTHROPIC_API_KEY="$api_key"
         else
-          # openai/ prefix makes Claude Code use its OpenAI provider and OPENAI_BASE_URL
+          # Claude Code always uses ANTHROPIC_BASE_URL with Anthropic-format requests.
+          # The proxy translates Anthropic Messages API -> OpenAI Chat Completions.
           model_flag="openai/${raw_model}"
-          [[ -n "$api_key" ]] && export OPENAI_API_KEY="$api_key" || echo "  ⚠  API key not set — add api_key for this provider in ${LLMC_CONFIG}"
-          [[ -n "$base_url" ]] && export OPENAI_BASE_URL="$base_url"
+          if [[ -z "$api_key" ]]; then
+            echo "  ⚠  API key not set — add api_key for this provider in ${LLMC_CONFIG}"
+          fi
+          start_proxy "$base_url" "$api_key"
+          export ANTHROPIC_BASE_URL="http://127.0.0.1:${PROXY_PORT}"
+          # Use a dummy key so Claude Code uses API-key mode, not the claude.ai session
+          export ANTHROPIC_API_KEY="llmc-proxy"
+          echo "  Proxy:     localhost:${PROXY_PORT} → ${base_url}"
+          echo "  Log:       /tmp/llmc-proxy.log"
+          echo ""
         fi
         ;;
       codex)
