@@ -47,6 +47,11 @@ is_local() {
 }
 
 cleanup() {
+  if [[ -n "${PROXY_PID:-}" ]]; then
+    kill "$PROXY_PID" 2>/dev/null || true
+    PROXY_PID=""
+  fi
+  [[ -n "${PROXY_SCRIPT:-}" ]] && { rm -f "$PROXY_SCRIPT"; PROXY_SCRIPT=""; }
   if [[ -n "${OPENCODE_CONFIG_FILE:-}" ]]; then
     rm -f "$OPENCODE_CONFIG_FILE"
     OPENCODE_CONFIG_FILE=""
@@ -59,6 +64,96 @@ cleanup() {
   if [[ -n "${ENV_BACKUP_FILE:-}" ]]; then
     restore_env "$ENV_BACKUP_FILE"
     echo "[$(date '+%H:%M:%S')] Restored original environment."
+  fi
+}
+
+# ── Start a local proxy that strips the openai/ prefix from model names
+# before forwarding to the upstream provider. Claude Code does not strip
+# this prefix itself, so providers with org/model-style names would fail.
+# Sets PROXY_PORT on success.
+start_proxy() {
+  local upstream="$1"
+  local api_key="$2"
+
+  PROXY_SCRIPT="$(mktemp /tmp/llmc-proxy.XXXXXX.py)"
+  local port_file
+  port_file="$(mktemp /tmp/llmc-proxy-port.XXXXXX)"
+
+  cat > "$PROXY_SCRIPT" << 'PYEOF'
+import sys, socket, http.client, json
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from urllib.parse import urlparse
+
+upstream_url, api_key, port_file = sys.argv[1], sys.argv[2], sys.argv[3]
+p = urlparse(upstream_url)
+uphost, uppath, use_ssl = p.netloc, p.path, p.scheme == 'https'
+
+class H(BaseHTTPRequestHandler):
+    def relay(self, method, body=None):
+        C = http.client.HTTPSConnection if use_ssl else http.client.HTTPConnection
+        c = C(uphost)
+        h = {
+            'Authorization': f'Bearer {api_key}',
+            'Content-Type':  'application/json',
+            'Accept':        self.headers.get('Accept', 'application/json'),
+        }
+        if body is not None:
+            h['Content-Length'] = str(len(body))
+        c.request(method, uppath + self.path, body=body, headers=h)
+        r = c.getresponse()
+        self.send_response(r.status)
+        for k, v in r.getheaders():
+            if k.lower() not in ('transfer-encoding', 'connection'):
+                self.send_header(k, v)
+        self.end_headers()
+        while True:
+            chunk = r.read(8192)
+            if not chunk:
+                break
+            self.wfile.write(chunk)
+            self.wfile.flush()
+
+    def do_POST(self):
+        n = int(self.headers.get('Content-Length', 0))
+        body = self.rfile.read(n)
+        try:
+            d = json.loads(body)
+            m = d.get('model', '')
+            if m.startswith('openai/'):
+                d['model'] = m[len('openai/'):]
+            body = json.dumps(d).encode()
+        except Exception:
+            pass
+        self.relay('POST', body)
+
+    def do_GET(self):
+        self.relay('GET')
+
+    def log_message(self, *a):
+        pass
+
+with socket.socket() as s:
+    s.bind(('127.0.0.1', 0))
+    port = s.getsockname()[1]
+open(port_file, 'w').write(str(port))
+HTTPServer(('127.0.0.1', port), H).serve_forever()
+PYEOF
+
+  python3 "$PROXY_SCRIPT" "$upstream" "$api_key" "$port_file" &
+  PROXY_PID=$!
+
+  local elapsed=0
+  while [[ ! -s "$port_file" ]] && (( elapsed < 30 )); do
+    sleep 0.1
+    elapsed=$(( elapsed + 1 ))
+  done
+
+  PROXY_PORT="$(cat "$port_file" 2>/dev/null)"
+  rm -f "$port_file"
+
+  if [[ -z "${PROXY_PORT:-}" ]]; then
+    echo "Error: failed to start local proxy." >&2
+    return 1
   fi
 }
 
@@ -243,6 +338,9 @@ main() {
 
   # Save environment before any changes
   OPENCODE_CONFIG_FILE=""
+  PROXY_PID=""
+  PROXY_SCRIPT=""
+  PROXY_PORT=""
   ENV_BACKUP_FILE="$(save_env)"
   trap cleanup EXIT
 
@@ -501,16 +599,16 @@ print(json.dumps(config, indent=2))
           model_flag="$raw_model"
           [[ -n "$api_key" ]] && export ANTHROPIC_API_KEY="$api_key"
         else
-          model_flag="$raw_model"
-          export ANTHROPIC_BASE_URL="$base_url"
+          model_flag="openai/${raw_model}"
           if [[ -n "$api_key" ]]; then
             export ANTHROPIC_API_KEY="$api_key"
-            echo "  API key:   set (${#api_key} chars)"
           else
-            echo "  API key:   ⚠ NOT SET — add api_key to this provider in ${LLMC_CONFIG}"
+            echo "  ⚠  API key not set — add api_key for this provider in ${LLMC_CONFIG}"
           fi
-          echo "  Base URL:  ${base_url}"
-          echo ""
+          echo "  Starting proxy → ${base_url}"
+          start_proxy "$base_url" "$api_key"
+          export ANTHROPIC_BASE_URL="http://127.0.0.1:${PROXY_PORT}"
+          echo "  Proxy:     localhost:${PROXY_PORT}"
           echo "  Note: If logged into claude.ai, run 'claude /logout' first."
           echo ""
         fi
