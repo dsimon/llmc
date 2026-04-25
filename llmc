@@ -588,8 +588,10 @@ print(json.dumps(config, indent=2))
           fi
           start_litellm_proxy "$raw_model" "$base_url" "$api_key" || return 1
           export ANTHROPIC_BASE_URL="http://127.0.0.1:${PROXY_PORT}"
-          # Dummy key forces Claude Code into API-key mode (not claude.ai session)
-          export ANTHROPIC_API_KEY="llmc-proxy"
+          # Override session token so Claude Code uses ANTHROPIC_BASE_URL without
+          # triggering the ANTHROPIC_API_KEY vs. session conflict warning.
+          export ANTHROPIC_AUTH_TOKEN="llmc-proxy"
+          unset ANTHROPIC_API_KEY
           echo "  Proxy:     localhost:${PROXY_PORT} → ${base_url}"
           echo "  Log:       /tmp/llmc-litellm.log"
           echo ""
