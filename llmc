@@ -501,14 +501,17 @@ print(json.dumps(config, indent=2))
           model_flag="$raw_model"
           [[ -n "$api_key" ]] && export ANTHROPIC_API_KEY="$api_key"
         else
-          model_flag="openai/${raw_model}"
+          model_flag="$raw_model"
           export ANTHROPIC_BASE_URL="$base_url"
-          [[ -n "$api_key" ]] && export ANTHROPIC_API_KEY="$api_key"
+          if [[ -n "$api_key" ]]; then
+            export ANTHROPIC_API_KEY="$api_key"
+            echo "  API key:   set (${#api_key} chars)"
+          else
+            echo "  API key:   ⚠ NOT SET — add api_key to this provider in ${LLMC_CONFIG}"
+          fi
+          echo "  Base URL:  ${base_url}"
           echo ""
-          echo "⚠  External provider note: Claude Code ignores ANTHROPIC_BASE_URL"
-          echo "   when you are logged into claude.ai via 'claude login'."
-          echo "   If you see a model-not-found error, run 'claude /logout' first,"
-          echo "   then re-run llmc.  Use 'claude login' afterward to restore."
+          echo "  Note: If logged into claude.ai, run 'claude /logout' first."
           echo ""
         fi
         ;;
@@ -569,8 +572,11 @@ print(json.dumps(config, indent=2))
   # ── Run the selected CLI ────────────────────────────────────────
   case "$BACKEND" in
     claude)
-      [[ -n "${model_flag}" ]] && export ANTHROPIC_MODEL="${model_flag}"
-      claude
+      if [[ -n "${model_flag}" ]]; then
+        claude --model "${model_flag}"
+      else
+        claude
+      fi
       ;;
     codex)
       if [[ -n "${model_flag}" ]]; then
