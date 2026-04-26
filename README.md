@@ -13,7 +13,7 @@ A shell script launcher for LLM coding assistants. Presents an interactive menu 
 
 ## What it does
 
-- **Local models**: queries LM Studio's API at `http://localhost:1234`, lists available LLMs with architecture, quantization, size, and context info, then loads the selected model before launching the CLI.
+- **Local models**: manages the full LM Studio lifecycle — runs `lms daemon up` to start LM Studio in headless mode if it isn't already running, queries the API to list available LLMs with architecture, quantization, size, and context info, loads the selected model before launching the CLI, and runs `lms daemon down` on exit (only if llmc started it).
 - **Cloud models**: reads `~/.llmc/config.json` (your credentials, never committed to git) to build the menu. For the `claude` backend with OpenAI-compatible providers, starts a local [LiteLLM](https://github.com/BerriAI/litellm) proxy that translates Claude Code's Anthropic-format requests into OpenAI chat/completions format.
 - **Option 0**: launches the backend with no model override, using whatever the CLI defaults to.
 - **Clean environment**: saves all relevant env vars before launch and restores them on exit — your shell is left exactly as it was.
@@ -38,7 +38,7 @@ ln -s "$PWD/llmc" /usr/local/bin/llmc   # or wherever you keep local scripts
 | `python3` | LM Studio model parsing, config loading |
 | `curl` | LM Studio API calls |
 | `bc` | Human-readable model size formatting |
-| `lms` | LM Studio load/unload (optional; from [LM Studio](https://lmstudio.ai)) |
+| `lms` | LM Studio daemon management and model load/unload (optional; from [LM Studio](https://lmstudio.ai)) |
 | `litellm` | openai_compatible providers with `claude` backend |
 
 Install LiteLLM:
@@ -182,6 +182,10 @@ The script has a straightforward pattern for each backend in three places: model
 ---
 
 ## Changelog
+
+### April 2026 — LM Studio daemon lifecycle management
+
+- llmc now starts LM Studio in headless mode (`lms daemon up`) if it isn't already running, waits for the API to become available, then shuts the daemon down on exit (`lms daemon down`). If LM Studio was already running before llmc launched, it is left running on exit.
 
 ### April 2026 — Config-driven cloud models + LiteLLM proxy
 

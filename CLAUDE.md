@@ -52,7 +52,13 @@ The menu shows `"<display> [<provider.name>]"` for each entry. Each backend's li
 ## Model Selection
 
 ### Local Models (LM Studio)
-The script queries `http://localhost:1234/api/v1/models` and lists available LLMs with architecture, quantization, size, context length, and loaded status. On selection it runs `lms unload --all` then `lms load <key>` before launching the CLI.
+The script manages the full LM Studio daemon lifecycle:
+
+1. **Startup**: if the LM Studio API isn't responding and `lms` is available, runs `lms daemon up` to start the daemon in headless mode, then waits up to 10 seconds for the API to become available before building the menu.
+2. **Model load**: on selection runs `lms unload --all` then `lms load <key>` before launching the CLI.
+3. **Shutdown**: if the daemon was started by llmc (not already running), runs `lms daemon down` on exit.
+
+If LM Studio was already running before llmc launched, the daemon is left running on exit.
 
 ### Cloud Models
 Loaded from `~/.llmc/config.json`. Current default set per backend:
@@ -106,7 +112,7 @@ The script saves and restores all of these on exit:
 | `python3` | LM Studio model parsing; LiteLLM config generation |
 | `curl` | LM Studio model API fetch |
 | `bc` | Human-readable model size formatting |
-| `lms` | LM Studio model load/unload (optional; skipped if absent) |
+| `lms` | LM Studio daemon start/stop and model load/unload (optional; skipped if absent) |
 | `litellm` | openai_compatible providers with claude backend |
 
 Install LiteLLM: `uv tool install 'litellm[proxy]'`
