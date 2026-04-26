@@ -61,6 +61,11 @@ cleanup() {
     echo "Unloading local model: ${LOADED_LOCAL_MODEL}..."
     lms unload --all 2>/dev/null || true
   fi
+  if [[ -n "${LMS_DAEMON_STARTED:-}" ]] && command -v lms >/dev/null 2>&1; then
+    echo ""
+    echo "Stopping LM Studio daemon..."
+    lms daemon down 2>/dev/null || true
+  fi
   if [[ -n "${ENV_BACKUP_FILE:-}" ]]; then
     restore_env "$ENV_BACKUP_FILE"
     echo "[$(date '+%H:%M:%S')] Restored original environment."
@@ -413,8 +418,23 @@ main() {
   PROXY_PID=""
   PROXY_SCRIPT=""
   PROXY_PORT=""
+  LMS_DAEMON_STARTED=""
   ENV_BACKUP_FILE="$(save_env)"
   trap cleanup EXIT
+
+  # ── Start LM Studio daemon if not already running ──────────────
+  if is_local && command -v lms >/dev/null 2>&1; then
+    if ! curl -sf "$LM_STUDIO_MODELS_API" >/dev/null 2>&1; then
+      echo "Starting LM Studio daemon..."
+      lms daemon up 2>/dev/null || true
+      LMS_DAEMON_STARTED=1
+      local elapsed=0
+      while (( elapsed < 20 )) && ! curl -sf "$LM_STUDIO_MODELS_API" >/dev/null 2>&1; do
+        sleep 0.5
+        (( elapsed++ ))
+      done
+    fi
+  fi
 
   # ── Fetch local models ─────────────────────────────────────────
   local local_json
