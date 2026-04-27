@@ -124,5 +124,5 @@ Install LiteLLM: `uv tool install 'litellm[proxy]'`
 | `llmc` | Main script |
 | `~/.llmc/config.json` | Cloud model config and credentials (gitignored) |
 | `.claude/settings.local.json` | Claude Code permissions (localhost WebFetch, etc.) |
-| `/tmp/llmc-litellm.log` | LiteLLM proxy log (written each session) |
+| `/tmp/llmc-litellm.*.log` | LiteLLM proxy log (unique per session, cleaned up on exit) |
 | `/tmp/llmc-litellm.*.yaml` | Ephemeral LiteLLM config (cleaned up on exit) |

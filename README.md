@@ -173,7 +173,7 @@ For the `claude` backend, any `openai_compatible` provider works automatically v
 uv tool upgrade litellm
 ```
 
-The LiteLLM proxy log is at `/tmp/llmc-litellm.log` — useful for diagnosing connection issues with external providers.
+The LiteLLM proxy log path is shown in the terminal when a proxy session starts — useful for diagnosing connection issues with external providers. The log is created as a unique temp file and cleaned up on exit.
 
 ### Adding a new backend CLI
 
@@ -182,6 +182,12 @@ The script has a straightforward pattern for each backend in three places: model
 ---
 
 ## Changelog
+
+### April 2026 — Security hardening
+
+- **Eval injection fix**: LM Studio API response values (model keys, display names, etc.) are now single-quote-escaped before being passed to `eval`, preventing command injection via a malicious or attacker-controlled LM Studio server.
+- **API key exposure fix**: the opencode provider `api_key` is now passed via environment variable instead of a Python `sys.argv` argument, preventing it from appearing in `ps aux` output.
+- **LiteLLM log**: proxy log is now created as a unique temp file (`mktemp`) and cleaned up on exit, replacing the fixed world-readable `/tmp/llmc-litellm.log` path.
 
 ### April 2026 — LM Studio daemon lifecycle management
 
