@@ -52,6 +52,7 @@ cleanup() {
     PROXY_PID=""
   fi
   [[ -n "${PROXY_SCRIPT:-}" ]] && { rm -f "$PROXY_SCRIPT"; PROXY_SCRIPT=""; }
+  [[ -n "${LITELLM_LOG_FILE:-}" ]] && { rm -f "$LITELLM_LOG_FILE"; LITELLM_LOG_FILE=""; }
   if [[ -n "${OPENCODE_CONFIG_FILE:-}" ]]; then
     rm -f "$OPENCODE_CONFIG_FILE"
     OPENCODE_CONFIG_FILE=""
@@ -123,9 +124,10 @@ litellm_settings:
 YAML
   fi
 
+  LITELLM_LOG_FILE="$(mktemp /tmp/llmc-litellm.XXXXXX.log)"
   LITELLM_USE_CHAT_COMPLETIONS_URL_FOR_ANTHROPIC_MESSAGES=true \
     litellm --config "$PROXY_SCRIPT" --port "$PROXY_PORT" \
-    > /tmp/llmc-litellm.log 2>&1 &
+    > "$LITELLM_LOG_FILE" 2>&1 &
   PROXY_PID=$!
 
   # Wait until the health endpoint responds (up to 20 s)
@@ -137,7 +139,7 @@ YAML
   done
 
   if ! curl -sf "http://127.0.0.1:${PROXY_PORT}/health" >/dev/null 2>&1; then
-    echo "Error: litellm proxy did not start (check /tmp/llmc-litellm.log)" >&2
+    echo "Error: litellm proxy did not start (check ${LITELLM_LOG_FILE})" >&2
     return 1
   fi
 }
@@ -418,6 +420,7 @@ main() {
   PROXY_PID=""
   PROXY_SCRIPT=""
   PROXY_PORT=""
+  LITELLM_LOG_FILE=""
   LMS_DAEMON_STARTED=""
   ENV_BACKUP_FILE="$(save_env)"
   trap cleanup EXIT
@@ -707,7 +710,7 @@ print(json.dumps(config, indent=2))
           export ANTHROPIC_AUTH_TOKEN="llmc-proxy"
           unset ANTHROPIC_API_KEY
           echo "  Proxy:     localhost:${PROXY_PORT} → ${base_url}"
-          echo "  Log:       /tmp/llmc-litellm.log"
+          echo "  Log:       ${LITELLM_LOG_FILE}"
           echo ""
         fi
         ;;
