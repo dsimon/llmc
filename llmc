@@ -52,6 +52,7 @@ cleanup() {
     PROXY_PID=""
   fi
   [[ -n "${PROXY_SCRIPT:-}" ]] && { rm -f "$PROXY_SCRIPT"; PROXY_SCRIPT=""; }
+  [[ -n "${LITELLM_LOG_FILE:-}" ]] && { rm -f "$LITELLM_LOG_FILE"; LITELLM_LOG_FILE=""; }
   if [[ -n "${OPENCODE_CONFIG_FILE:-}" ]]; then
     rm -f "$OPENCODE_CONFIG_FILE"
     OPENCODE_CONFIG_FILE=""
@@ -123,9 +124,10 @@ litellm_settings:
 YAML
   fi
 
+  LITELLM_LOG_FILE="$(mktemp /tmp/llmc-litellm.XXXXXX.log)"
   LITELLM_USE_CHAT_COMPLETIONS_URL_FOR_ANTHROPIC_MESSAGES=true \
     litellm --config "$PROXY_SCRIPT" --port "$PROXY_PORT" \
-    > /tmp/llmc-litellm.log 2>&1 &
+    > "$LITELLM_LOG_FILE" 2>&1 &
   PROXY_PID=$!
 
   # Wait until the health endpoint responds (up to 20 s)
@@ -137,7 +139,7 @@ YAML
   done
 
   if ! curl -sf "http://127.0.0.1:${PROXY_PORT}/health" >/dev/null 2>&1; then
-    echo "Error: litellm proxy did not start (check /tmp/llmc-litellm.log)" >&2
+    echo "Error: litellm proxy did not start (check ${LITELLM_LOG_FILE})" >&2
     return 1
   fi
 }
@@ -418,6 +420,7 @@ main() {
   PROXY_PID=""
   PROXY_SCRIPT=""
   PROXY_PORT=""
+  LITELLM_LOG_FILE=""
   LMS_DAEMON_STARTED=""
   ENV_BACKUP_FILE="$(save_env)"
   trap cleanup EXIT
@@ -453,59 +456,62 @@ import json, sys
 models = json.loads(sys.argv[1]).get('models', [])
 llms = [m for m in models if m.get('type') == 'llm']
 
+def sq(s):
+    return \"'\" + str(s).replace(\"'\", \"'\\\\''\" ) + \"'\"
+
 print('local_keys=(')
 for m in llms:
-    print(f'    \"{m[\"key\"]}\"')
+    print(f'    {sq(m[\"key\"])}')
 print(')')
 
 print('local_names=(')
 for m in llms:
-    print(f'    \"{m.get(\"display_name\", m[\"key\"])}\"')
+    print(f'    {sq(m.get(\"display_name\", m[\"key\"]))}')
 print(')')
 
 print('local_archs=(')
 for m in llms:
-    print(f'    \"{m.get(\"architecture\", \"?\")}\"')
+    print(f'    {sq(m.get(\"architecture\", \"?\"))}')
 print(')')
 
 print('local_quants=(')
 for m in llms:
     q = m.get('quantization', {})
-    print(f'    \"{q.get(\"name\", \"?\")} ({q.get(\"bits_per_weight\", \"?\")}bit)\"')
+    print(f'    {sq(str(q.get(\"name\", \"?\")) + \" (\" + str(q.get(\"bits_per_weight\", \"?\")) + \"bit)\")}')
 print(')')
 
 print('local_sizes=(')
 for m in llms:
-    print(f'    \"{m.get(\"size_bytes\", 0)}\"')
+    print(f'    {sq(m.get(\"size_bytes\", 0))}')
 print(')')
 
 print('local_contexts=(')
 for m in llms:
-    print(f'    \"{m.get(\"max_context_length\", 0)}\"')
+    print(f'    {sq(m.get(\"max_context_length\", 0))}')
 print(')')
 
 print('local_vision=(')
 for m in llms:
     cap = m.get('capabilities', {})
-    print(f'    \"{cap.get(\"vision\", False)}\"')
+    print(f'    {sq(cap.get(\"vision\", False))}')
 print(')')
 
 print('local_tooluse=(')
 for m in llms:
     cap = m.get('capabilities', {})
-    print(f'    \"{cap.get(\"trained_for_tool_use\", False)}\"')
+    print(f'    {sq(cap.get(\"trained_for_tool_use\", False))}')
 print(')')
 
 print('local_reasoning=(')
 for m in llms:
     r = m.get('capabilities', {}).get('reasoning', {})
-    print(f'    \"{r.get(\"default\", \"off\")}\"')
+    print(f'    {sq(r.get(\"default\", \"off\"))}')
 print(')')
 
 print('local_loaded=(')
 for m in llms:
     inst = m.get('loaded_instances', [])
-    print(f'    \"{len(inst)}\"')
+    print(f'    {sq(len(inst))}')
 print(')')
 
 print('local_variants=(')
@@ -513,11 +519,11 @@ for m in llms:
     variants = m.get('variants', [])
     sel = m.get('selected_variant', '')
     if sel:
-        print(f'    \"{sel}\"')
+        print(f'    {sq(sel)}')
     elif variants:
-        print(f'    \"{variants[0]}\"')
+        print(f'    {sq(variants[0])}')
     else:
-        print('    \"\"')
+        print(\"    ''\")
 print(')')
 " "$local_json")"
   fi
@@ -704,7 +710,7 @@ print(json.dumps(config, indent=2))
           export ANTHROPIC_AUTH_TOKEN="llmc-proxy"
           unset ANTHROPIC_API_KEY
           echo "  Proxy:     localhost:${PROXY_PORT} → ${base_url}"
-          echo "  Log:       /tmp/llmc-litellm.log"
+          echo "  Log:       ${LITELLM_LOG_FILE}"
           echo ""
         fi
         ;;
@@ -733,9 +739,10 @@ print(json.dumps(config, indent=2))
           [[ "$ptype" == "openai"    && -n "$api_key" ]] && export OPENAI_API_KEY="$api_key"
         else
           OPENCODE_CONFIG_FILE="$(mktemp /tmp/llmc-opencode.XXXXXX.json)"
-          python3 -c "
-import json, sys
-prov_id, model_id, display, base_url, api_key = sys.argv[1:]
+          _LLMC_API_KEY="$api_key" python3 -c "
+import json, sys, os
+prov_id, model_id, display, base_url = sys.argv[1:]
+api_key = os.environ.get('_LLMC_API_KEY', '')
 config = {
   'provider': {
     prov_id: {
@@ -747,7 +754,7 @@ config = {
   }
 }
 print(json.dumps(config, indent=2))
-" "$prov_id" "$raw_model" "$model_display" "$base_url" "$api_key" > "$OPENCODE_CONFIG_FILE"
+" "$prov_id" "$raw_model" "$model_display" "$base_url" > "$OPENCODE_CONFIG_FILE"
           export OPENCODE_CONFIG="$OPENCODE_CONFIG_FILE"
           model_flag="${prov_id}/${raw_model}"
         fi
