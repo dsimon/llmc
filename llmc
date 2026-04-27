@@ -736,9 +736,10 @@ print(json.dumps(config, indent=2))
           [[ "$ptype" == "openai"    && -n "$api_key" ]] && export OPENAI_API_KEY="$api_key"
         else
           OPENCODE_CONFIG_FILE="$(mktemp /tmp/llmc-opencode.XXXXXX.json)"
-          python3 -c "
-import json, sys
-prov_id, model_id, display, base_url, api_key = sys.argv[1:]
+          _LLMC_API_KEY="$api_key" python3 -c "
+import json, sys, os
+prov_id, model_id, display, base_url = sys.argv[1:]
+api_key = os.environ.get('_LLMC_API_KEY', '')
 config = {
   'provider': {
     prov_id: {
@@ -750,7 +751,7 @@ config = {
   }
 }
 print(json.dumps(config, indent=2))
-" "$prov_id" "$raw_model" "$model_display" "$base_url" "$api_key" > "$OPENCODE_CONFIG_FILE"
+" "$prov_id" "$raw_model" "$model_display" "$base_url" > "$OPENCODE_CONFIG_FILE"
           export OPENCODE_CONFIG="$OPENCODE_CONFIG_FILE"
           model_flag="${prov_id}/${raw_model}"
         fi
