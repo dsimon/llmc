@@ -453,59 +453,62 @@ import json, sys
 models = json.loads(sys.argv[1]).get('models', [])
 llms = [m for m in models if m.get('type') == 'llm']
 
+def sq(s):
+    return \"'\" + str(s).replace(\"'\", \"'\\\\''\" ) + \"'\"
+
 print('local_keys=(')
 for m in llms:
-    print(f'    \"{m[\"key\"]}\"')
+    print(f'    {sq(m[\"key\"])}')
 print(')')
 
 print('local_names=(')
 for m in llms:
-    print(f'    \"{m.get(\"display_name\", m[\"key\"])}\"')
+    print(f'    {sq(m.get(\"display_name\", m[\"key\"]))}')
 print(')')
 
 print('local_archs=(')
 for m in llms:
-    print(f'    \"{m.get(\"architecture\", \"?\")}\"')
+    print(f'    {sq(m.get(\"architecture\", \"?\"))}')
 print(')')
 
 print('local_quants=(')
 for m in llms:
     q = m.get('quantization', {})
-    print(f'    \"{q.get(\"name\", \"?\")} ({q.get(\"bits_per_weight\", \"?\")}bit)\"')
+    print(f'    {sq(str(q.get(\"name\", \"?\")) + \" (\" + str(q.get(\"bits_per_weight\", \"?\")) + \"bit)\")}')
 print(')')
 
 print('local_sizes=(')
 for m in llms:
-    print(f'    \"{m.get(\"size_bytes\", 0)}\"')
+    print(f'    {sq(m.get(\"size_bytes\", 0))}')
 print(')')
 
 print('local_contexts=(')
 for m in llms:
-    print(f'    \"{m.get(\"max_context_length\", 0)}\"')
+    print(f'    {sq(m.get(\"max_context_length\", 0))}')
 print(')')
 
 print('local_vision=(')
 for m in llms:
     cap = m.get('capabilities', {})
-    print(f'    \"{cap.get(\"vision\", False)}\"')
+    print(f'    {sq(cap.get(\"vision\", False))}')
 print(')')
 
 print('local_tooluse=(')
 for m in llms:
     cap = m.get('capabilities', {})
-    print(f'    \"{cap.get(\"trained_for_tool_use\", False)}\"')
+    print(f'    {sq(cap.get(\"trained_for_tool_use\", False))}')
 print(')')
 
 print('local_reasoning=(')
 for m in llms:
     r = m.get('capabilities', {}).get('reasoning', {})
-    print(f'    \"{r.get(\"default\", \"off\")}\"')
+    print(f'    {sq(r.get(\"default\", \"off\"))}')
 print(')')
 
 print('local_loaded=(')
 for m in llms:
     inst = m.get('loaded_instances', [])
-    print(f'    \"{len(inst)}\"')
+    print(f'    {sq(len(inst))}')
 print(')')
 
 print('local_variants=(')
@@ -513,11 +516,11 @@ for m in llms:
     variants = m.get('variants', [])
     sel = m.get('selected_variant', '')
     if sel:
-        print(f'    \"{sel}\"')
+        print(f'    {sq(sel)}')
     elif variants:
-        print(f'    \"{variants[0]}\"')
+        print(f'    {sq(variants[0])}')
     else:
-        print('    \"\"')
+        print(\"    ''\")
 print(')')
 " "$local_json")"
   fi
