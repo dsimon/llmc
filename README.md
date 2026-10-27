@@ -1,3 +1,6 @@
+> [!WARNING]
+> **Deprecated** — this repo is no longer maintained (2026-10-27).
+
 # llmc
 
 A shell script launcher for LLM coding assistants. Presents an interactive menu to select from local models (via LM Studio) or cloud models (Anthropic, OpenAI, DeepInfra, OpenRouter, and others), then launches your chosen CLI with the right environment configured — no manual environment variable juggling required.
